@@ -1,0 +1,42 @@
+<h1>Kanban</h1>
+<div class="board">
+  <div class="column">
+    <h2>A Fazer</h2>
+    <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+         id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of aFazer; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloAFazer placeholder="Nova tarefa" />
+      <button (click)="adicionar(aFazer, novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Em Andamento</h2>
+    <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+         id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of emAndamento; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+      <button (click)="adicionar(emAndamento, novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Concluído</h2>
+    <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+         id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of concluido; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloConcluido placeholder="Nova tarefa" />
+      <button (click)="adicionar(concluido, novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+    </div>
+  </div>
+</div>
