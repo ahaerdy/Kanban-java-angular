@@ -1,7 +1,12 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
 import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { HttpClient } from '@angular/common/http';
 import { Card } from './models/card';
 import { CardItemComponent } from './card-item/card-item';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
 
 @Component({
   imports: [CardItemComponent, DragDropModule],
@@ -9,17 +14,22 @@ import { CardItemComponent } from './card-item/card-item';
   styleUrl: './app.scss',
   templateUrl: './app.html',
 })
-export class App {
-  aFazer: Card[] = [
-    { id: crypto.randomUUID(), titulo: 'Concluir E-commerce Portfolio', etiqueta: 'Profissional' },
-    { id: crypto.randomUUID(), titulo: "O'Reilly Java Learning Path", etiqueta: 'Estudos' },
-  ];
-  emAndamento: Card[] = [
-    { id: crypto.randomUUID(), titulo: 'Finalizar Debugging Design Patterns', etiqueta: 'Github' },
-  ];
-  concluido: Card[] = [
-    { id: crypto.randomUUID(), titulo: 'Melhorar Apresentação Perfil Github', etiqueta: 'Profissional' },
-  ];
+export class App implements OnInit {
+  private http = inject(HttpClient);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  ngOnInit() {
+    this.http.get<CardApi[]>('http://localhost:8080/cards').subscribe(cards => {
+      this.aFazer = cards.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = cards.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = cards.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+  }
 
   drop(event: CdkDragDrop<Card[]>) {
     if (event.previousContainer === event.container) {
