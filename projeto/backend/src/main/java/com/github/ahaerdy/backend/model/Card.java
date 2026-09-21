@@ -1,9 +1,14 @@
 package com.github.ahaerdy.backend.model;
 
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 public class Card {
@@ -11,18 +16,20 @@ public class Card {
     @Id
     private String id;
     private String titulo;
-    private String etiqueta;
 
     @Enumerated(EnumType.STRING)
     private ColunaEnum coluna;
 
+    @Enumerated(EnumType.STRING)
+    @ElementCollection(fetch = FetchType.EAGER)
+    private List<EtiquetaEnum> etiquetas = new ArrayList<>();
+
     public Card() {
     }
 
-    public Card(String id, String titulo, String etiqueta, ColunaEnum coluna) {
+    public Card(String id, String titulo, ColunaEnum coluna) {
         this.id = id;
         this.titulo = titulo;
-        this.etiqueta = etiqueta;
         this.coluna = coluna;
     }
 
@@ -42,19 +49,19 @@ public class Card {
         this.titulo = titulo;
     }
 
-    public String getEtiqueta() {
-        return etiqueta;
-    }
-
-    public void setEtiqueta(String etiqueta) {
-        this.etiqueta = etiqueta;
-    }
-
     public ColunaEnum getColuna() {
         return coluna;
     }
 
     public void setColuna(ColunaEnum coluna) {
         this.coluna = coluna;
+    }
+
+    public List<EtiquetaEnum> getEtiquetas() {
+        return etiquetas;
+    }
+
+    public void setEtiquetas(List<EtiquetaEnum> etiquetas) {
+        this.etiquetas = etiquetas;
     }
 }

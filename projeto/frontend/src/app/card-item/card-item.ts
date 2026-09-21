@@ -10,4 +10,11 @@ import { Card } from '../models/card';
 export class CardItemComponent {
   @Input({ required: true }) card!: Card;
   @Output() remover = new EventEmitter<Card>();
+
+  formatarNome(nome: string): string {
+    return nome
+      .toLowerCase()
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, letra => letra.toUpperCase());
+  }
 }

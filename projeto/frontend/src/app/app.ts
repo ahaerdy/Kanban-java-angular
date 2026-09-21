@@ -51,7 +51,7 @@ export class App implements OnInit {
 
   adicionar(coluna: Card[], titulo: string) {
     if (!titulo.trim()) return;
-    this.api.criar(titulo, 'Geral').subscribe(novo => {
+    this.api.criar(titulo).subscribe(novo => {
       coluna.push(novo);
       this.cdr.markForCheck();
     });

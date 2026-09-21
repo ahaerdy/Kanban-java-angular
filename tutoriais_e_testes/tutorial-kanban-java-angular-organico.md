@@ -2249,6 +2249,10 @@ public enum EtiquetaEnum {
         this.corHex = corHex;
     }
 
+    public String getName() {
+        return name();
+    }
+
     public String getCorHex() {
         return corHex;
     }
@@ -2282,6 +2286,7 @@ public class Card {
     @Enumerated(EnumType.STRING)
     private ColunaEnum coluna;
 
+    @Enumerated(EnumType.STRING)
     @ElementCollection(fetch = FetchType.EAGER)
     private List<EtiquetaEnum> etiquetas = new ArrayList<>();
 
@@ -2583,22 +2588,26 @@ export class App implements OnInit {
 ### Explicando
 
 - `@ElementCollection` — anotação JPA para persistir uma coleção de valores simples (aqui, `enum`s) associada a uma entidade, sem precisar criar uma tabela/entidade separada para "etiqueta". Uma entidade `Etiqueta` completa, com sua própria tabela e `id`, só se justificaria se etiquetas precisassem ser criadas ou editadas dinamicamente pelo usuário, o que não é um requisito deste projeto por ora.
-- `@JsonFormat(shape = JsonFormat.Shape.OBJECT)`, em `EtiquetaEnum` — por padrão, o Jackson (biblioteca de serialização JSON usada pelo Spring) converte um `enum` para JSON usando apenas o seu nome, como uma string simples (por exemplo, `"PROFISSIONAL"`), ignorando qualquer campo adicional como `corHex`. Essa anotação instrui o Jackson a serializar cada constante como um objeto completo, incluindo seus métodos de acesso (`getCorHex()`), o que produz, para cada etiqueta, um JSON no formato `{"name":"PROFISSIONAL","corHex":"#7e57c2"}`.
-- `formatarNome(nome: string)`, no frontend — o campo `name`, vindo do backend, é o nome bruto da constante Java (`"PRIORIDADE_ALTA"`). Essa função o converte para uma forma de leitura mais natural (`"Prioridade Alta"`), sem exigir nenhuma tradução mantida manualmente no backend.
+- `@Enumerated(EnumType.STRING)`, sobre o campo `etiquetas` — sem essa anotação, o JPA aplicaria a seus elementos o mesmo padrão já discutido na Parte 13 para o campo `coluna`: gravaria, na tabela da coleção, apenas a posição numérica de cada constante em `EtiquetaEnum` (`0` para `PROFISSIONAL`, `1` para `ESTUDOS`, e assim por diante), em vez do seu nome. O risco é o mesmo descrito naquela parte — a inserção de uma nova etiqueta no meio da declaração do `enum` corromperia silenciosamente as etiquetas já gravadas —, e a anotação evita esse risco do mesmo modo, persistindo o nome textual da constante.
+- `@JsonFormat(shape = JsonFormat.Shape.OBJECT)`, em `EtiquetaEnum` — por padrão, o Jackson (biblioteca de serialização JSON usada pelo Spring) converte um `enum` para JSON usando apenas o seu nome, como uma string simples (por exemplo, `"PROFISSIONAL"`), ignorando qualquer campo adicional como `corHex`. Essa anotação instrui o Jackson a serializar cada constante como um objeto, com um par chave-valor para cada um dos seus métodos de acesso (`get*`) — o que, sozinha, produziria apenas `{"corHex":"#29b6f6"}`, já que `getCorHex()` é o único método de acesso declarado em `EtiquetaEnum` além do próprio nome da constante, que não é exposto por um `get*` automático. Por essa razão, `EtiquetaEnum` também declara `getName()`, retornando `name()` (o nome da constante, herdado de todo `enum` Java): é esse método que faz o Jackson incluir `"name":"GITHUB"` no objeto serializado, ao lado de `"corHex"`, produzindo o formato `{"corHex":"#29b6f6","name":"GITHUB"}` do qual o frontend depende.
+- `formatarNome(nome: string)`, no frontend — o campo `name`, vindo do backend, é o nome bruto da constante Java (`"PRIORIDADE_ALTA"`). Essa função o converte para uma forma de leitura mais natural (`"Prioridade Alta"`), sem exigir nenhuma tradução mantida manualmente no backend. Sem o `getName()` descrito acima, esse campo chegaria como `undefined`, e a chamada a `nome.toLowerCase()` dentro de `formatarNome` lançaria uma exceção assim que um card com etiqueta fosse renderizado.
 - A criação de um card, desde a Parte 7, atribuía a etiqueta fixa `"Geral"` ao card recém-criado. Com a mudança para uma coleção de etiquetas, essa atribuição automática foi removida: um card criado pelo botão "+" nasce **sem nenhuma etiqueta**. Não foi construída, nesta etapa, nenhuma interface para o usuário escolher etiquetas ao criar um card; isso é uma decisão consciente de escopo, e não uma lacuna esquecida: nenhuma parte do sistema, até aqui, precisa dessa funcionalidade para ser útil. Uma etiqueta pode, por enquanto, ser associada a um card através de uma chamada direta à API (por exemplo, `PUT /cards/{id}` com o corpo apropriado, endpoint que pode ser adicionado quando essa necessidade se tornar real).
+- O campo `etiqueta` (singular), da Parte 7 até a Parte 13, é removido de `Card` nesta parte, mas `spring.jpa.hibernate.ddl-auto=update` (configurado na Parte 12) apenas acrescenta estrutura ao banco: ele nunca remove uma coluna ou tabela que deixou de ter correspondência na entidade. A coluna `etiqueta` antiga permanece, órfã, na tabela `card`, e a nova tabela da coleção (`card_etiquetas`, criada por `@ElementCollection`) nasce em paralelo. Se essa parte já havia sido implementada sem `@Enumerated(EnumType.STRING)`, a correção subsequente exige apagar e deixar o Hibernate recriar a tabela `card_etiquetas` (`DROP TABLE card_etiquetas;`, com o backend parado), pois `update` também não altera o tipo de uma coluna já existente.
 
 ### Glossário — Parte 14
 
 | Termo | Significado |
 |---|---|
 | **`@ElementCollection`** | Anotação JPA para mapear uma coleção de valores simples (não entidades completas) associada a uma entidade dona. |
-| **`@JsonFormat(shape = JsonFormat.Shape.OBJECT)`** | Anotação do Jackson que faz um `enum` ser serializado como um objeto JSON completo (incluindo seus métodos de acesso), em vez de apenas o nome da constante. |
+| **`@Enumerated(EnumType.STRING)`** | Anotação JPA que, aplicada a um `enum` ou a uma coleção de `enum`s, faz a persistência gravar o nome textual da constante em vez da sua posição numérica (ver Parte 13). |
+| **`@JsonFormat(shape = JsonFormat.Shape.OBJECT)`** | Anotação do Jackson que faz um `enum` ser serializado como um objeto JSON, com um par chave-valor para cada método de acesso (`get*`) declarado nele, em vez de apenas o nome da constante. |
+| **`name()`** (Java) | Método presente em todo `enum` Java, que devolve o nome da constante como declarado no código (por exemplo, `"GITHUB"`). |
 | **`[style.background]`** | Vínculo de propriedade do Angular que define diretamente uma propriedade CSS a partir de uma expressão. |
 | **Enum com atributo** (Java) | Um `enum` pode ter campos e construtor próprios, permitindo associar dados fixos (aqui, uma cor) a cada constante. |
 
 ### 🧪 Teste rápido
 
-Crie um card pelo frontend; ele deve aparecer sem nenhuma etiqueta. Usando `curl` ou uma ferramenta como Postman/Insomnia, associe uma etiqueta a um card existente através de uma chamada direta ao banco ou de um pequeno script (o endpoint de edição de etiquetas não foi construído nesta etapa; se quiser testar visualmente antes de construí-lo, você pode inserir um valor diretamente na tabela do MySQL). Recarregue o frontend e confirme que a etiqueta aparece com a cor correspondente à constante em `EtiquetaEnum`, e com o texto formatado (por exemplo, `PRIORIDADE_ALTA` exibido como "Prioridade Alta").
+Crie um card pelo frontend; ele deve aparecer sem nenhuma etiqueta. Confirme, com `curl http://localhost:8080/cards`, que o JSON de um card traz `"etiquetas":[]` e que, para os `enum`s expostos por outros endpoints desta parte, um objeto de etiqueta contém tanto `"name"` quanto `"corHex"` — a ausência de `"name"` indica que `getName()` não foi adicionado a `EtiquetaEnum`. Associe então uma etiqueta a um card existente através de uma chamada direta ao banco (o endpoint de edição de etiquetas não foi construído nesta etapa): com o backend parado, insira a etiqueta diretamente na tabela da coleção, por exemplo `INSERT INTO card_etiquetas (card_id, etiquetas) VALUES ('<id-do-card>', 'GITHUB');`. Suba o backend novamente, recarregue o frontend e confirme que a etiqueta aparece com a cor correspondente à constante em `EtiquetaEnum`, e com o texto formatado (por exemplo, `PRIORIDADE_ALTA` exibido como "Prioridade Alta").
 
 ---
 

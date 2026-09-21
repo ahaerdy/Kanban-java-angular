@@ -1,5 +1,7 @@
 <div class="card">
-  <span class="tag">{{ card.etiqueta }}</span>
+  @for (e of card.etiquetas; track e.name) {
+    <span class="tag" [style.background]="e.corHex">{{ formatarNome(e.name) }}</span>
+  }
   <strong>{{ card.titulo }}</strong>
   <button class="remover" (click)="remover.emit(card)">×</button>
 </div>

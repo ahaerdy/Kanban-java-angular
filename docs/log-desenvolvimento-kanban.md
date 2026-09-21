@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco.
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada).
 
 ---
 
@@ -41,6 +41,8 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 10: Extração do Domínio no Backend](#parte-10-extração-do-domínio-no-backend)
 - [Parte 11: CRUD Completo pela API](#parte-11-crud-completo-pela-api)
 - [Parte 12: Persistência em MySQL via Docker Compose](#parte-12-persistência-em-mysql-via-docker-compose)
+- [Parte 13: Campo `coluna` como `enum` no Backend](#parte-13-campo-coluna-como-enum-no-backend)
+- [Parte 14: Etiquetas como Coleção de `Enum` com Cor](#parte-14-etiquetas-como-coleção-de-enum-com-cor)
 
 ---
 
@@ -1790,6 +1792,657 @@ A persistência foi validada por meio de uma sequência de testes: criação dos
 
 <p align="center">
   <img src="000-Midia_e_Anexos/2026-09-20-21-19-26.png" alt="" width="1024">
+</p>
+
+---
+
+## Parte 13: Campo `coluna` como `enum` no Backend
+
+### Objetivo
+
+Restringir o campo `coluna` a um conjunto fechado de valores válidos também no backend, substituindo o tipo `String` por um `enum` Java, de modo que valores inexistentes passem a ser rejeitados na fronteira da API, em vez de aceitos e persistidos.
+
+### Limitação Identificada
+
+Desde a Parte 4, o frontend restringe o campo `coluna` a um tipo de união de literais de string (`'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'`), verificado pelo compilador TypeScript. No backend, porém, o campo sempre foi uma `String` livre, escrita como texto literal em vários pontos do código (por exemplo, `"A_FAZER"` em `KanbanService.criar`), e o corpo da requisição de movimentação era recebido como `Map<String, String>`, sem tipo nem verificação de conteúdo. Nada impedia o envio de um valor inexistente (por exemplo, `"A_FASER"`) para `PUT /cards/{id}/coluna`: o backend o aceitaria e o persistiria, produzindo um card "órfão", não exibido por nenhuma das três colunas do frontend. A proteção de tipos existia, portanto, em apenas um dos lados da comunicação, e não alcançava requisições originadas fora da interface (por exemplo, via `curl`).
+
+### Implementação Realizada
+
+- Criação do `enum` `ColunaEnum`, no pacote `model`, com as três constantes `A_FAZER`, `EM_ANDAMENTO` e `CONCLUIDO`.
+- Criação do `record` `ColunaRequest`, no pacote `web`, em substituição a `Map<String, String>` como tipo do corpo da requisição de movimentação de card.
+- Alteração da entidade `Card`: o campo `coluna` (e, consequentemente, o construtor, o getter e o setter correspondentes) passou de `String` para `ColunaEnum`, acompanhado da anotação `@Enumerated(EnumType.STRING)`.
+- Alteração de `CardController`: o método `mover` passou a receber `ColunaRequest` em vez de `Map<String, String>`.
+- Alteração de `KanbanService`: `criar` passou a atribuir `ColunaEnum.A_FAZER` ao novo card, e `mover` passou a receber um `ColunaEnum` em vez de `String`.
+- Nenhuma alteração no frontend.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/model/ColunaEnum.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+public enum ColunaEnum {
+    A_FAZER, EM_ANDAMENTO, CONCLUIDO
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/ColunaRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.ColunaEnum;
+
+public record ColunaRequest(ColunaEnum coluna) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String etiqueta;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, String etiqueta, ColunaEnum coluna) {
+        this.id = id;
+        this.titulo = titulo;
+        this.etiqueta = etiqueta;
+        this.coluna = coluna;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(String etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody Card novo) {
+        return service.criar(novo.getTitulo(), novo.getEtiqueta());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll();
+    }
+
+    public Card criar(String titulo, String etiqueta) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, etiqueta, ColunaEnum.A_FAZER);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            repository.save(c);
+        });
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+Nenhum arquivo do frontend foi alterado nesta etapa. `KanbanApiService.mover` já enviava `{ coluna }` com um valor de texto (por exemplo, `"EM_ANDAMENTO"`), formato que o backend passou a converter automaticamente para a constante correspondente de `ColunaEnum`.
+
+### Descrição Técnica
+
+- Um `enum` Java declara um conjunto fechado e nomeado de constantes; o compilador rejeita a atribuição de qualquer valor fora desse conjunto. `ColunaEnum` é, no backend, o equivalente do tipo de união de literais (`'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'`) que o frontend possui desde a Parte 4. A diferença relevante é o momento da verificação: no frontend, ela ocorre em tempo de compilação do TypeScript; no backend, além da compilação Java, ela também ocorre em tempo de execução, no momento em que o corpo JSON de uma requisição é convertido em objeto, ponto em que dados externos entram no sistema.
+- `@Enumerated(EnumType.STRING)` instrui o JPA a persistir o `enum` pelo nome textual da constante (`"A_FAZER"`) na coluna do banco. Sem a anotação, o comportamento padrão seria `EnumType.ORDINAL`, que grava apenas a posição numérica da constante na declaração do `enum` (`0` para a primeira, `1` para a segunda, e assim por diante). O armazenamento ordinal é mais compacto, mas frágil: a inserção de uma nova constante no meio da declaração, ou a alteração da ordem das existentes, faria os números já gravados passarem a apontar para constantes diferentes das originais, corrompendo silenciosamente os dados antigos, sem nenhum erro visível. `EnumType.STRING` ocupa mais espaço no banco, mas é imune a esse problema.
+- Como os nomes das constantes de `ColunaEnum` são idênticos aos valores textuais já gravados desde a Parte 12 (`A_FAZER`, `EM_ANDAMENTO`, `CONCLUIDO`), os registros já persistidos permanecem compatíveis com o novo tipo, sem necessidade de migração dos dados.
+- `record ColunaRequest(ColunaEnum coluna)` é um *record* Java (recurso disponível desde o Java 16; o projeto utiliza Java 21), forma concisa de declarar uma classe imutável voltada a carregar dados, sem necessidade de escrever construtor, getters, `equals`, `hashCode` e `toString`. Seus métodos de acesso são gerados sem o prefixo `get`, motivo pelo qual o controlador usa `body.coluna()`. Em relação ao `Map<String, String>` anterior, o tipo explicita o campo esperado e o seu tipo, eliminando a chave textual `"coluna"` que era buscada com `body.get("coluna")`, sem verificação em tempo de compilação.
+- A rejeição de valores inválidos ocorre antes da execução do método do controlador: o Jackson, biblioteca de serialização JSON utilizada pelo Spring, ao não conseguir converter o texto recebido em nenhuma constante de `ColunaEnum`, faz o Spring responder com `400 Bad Request`, sem que `KanbanService` chegue a ser invocado. O mesmo vale para `POST /cards`, cujo `@RequestBody Card` também passou a ter `coluna` tipada como `ColunaEnum`: um corpo com `coluna` inexistente é igualmente recusado. O frontend não é afetado, pois envia apenas `titulo` e `etiqueta` nessa chamada, e `KanbanService.criar` atribui sempre `A_FAZER` ao novo card.
+- O contrato JSON entre frontend e backend permaneceu idêntico ao da Parte 12: o Jackson serializa um `enum` pelo nome da constante, de modo que a resposta de `GET /cards` continua contendo `"coluna": "A_FAZER"`, e o valor enviado por `KanbanApiService.mover` continua sendo um texto. É por essa razão que nenhuma linha do frontend precisou ser alterada. Assim como na Parte 12, a mudança ficou confinada ao interior do backend, sem propagação para os consumidores da API.
+- Uma limitação remanescente: o conjunto de valores válidos de `coluna` passou a ser declarado em dois lugares independentes, o `enum` `ColunaEnum` no backend e o tipo de união de literais (juntamente com `COLUNA_POR_ID` em `app.ts`) no frontend. Não existe mecanismo automático de sincronização entre eles; a adição de uma quarta coluna exigiria alterar ambos manualmente.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`enum`** (Java) | Tipo que representa um conjunto fixo e nomeado de constantes; aqui, os três estados possíveis de uma coluna. |
+| **`@Enumerated`** | Anotação JPA que define a estratégia de persistência de um campo do tipo `enum`. |
+| **`EnumType.STRING`** | Estratégia que persiste o `enum` pelo nome textual da constante; imune a mudanças na ordem de declaração. |
+| **`EnumType.ORDINAL`** | Estratégia padrão do JPA, que persiste apenas a posição numérica da constante; sujeita a corrupção silenciosa de dados se a ordem de declaração mudar. |
+| **`record`** (Java) | Tipo de classe concisa, introduzido no Java 16, voltada para carregar dados imutáveis, com construtor e métodos de acesso gerados automaticamente. |
+| **Jackson** | Biblioteca de serialização e desserialização JSON utilizada pelo Spring para converter o corpo das requisições em objetos Java e vice-versa. |
+| **`400 Bad Request`** | Código de status HTTP que indica que a requisição enviada pelo cliente é malformada ou inválida. |
+
+### Resultado
+
+A implementação foi concluída sem erros de compilação, e o comportamento foi validado conforme esperado. O fluxo normal do frontend (listagem, criação, movimentação entre as três colunas e exclusão de cards) permaneceu idêntico ao da Parte 12, sem qualquer alteração no código Angular. Uma requisição manual `PUT /cards/{id}/coluna` com corpo contendo um valor inexistente (`{"coluna": "NAO_EXISTE"}`) passou a ser recusada com `400 Bad Request`, em vez de aceita silenciosamente, fechando a lacuna descrita na limitação identificada no início desta entrada.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 14: Etiquetas como Coleção de `Enum` com Cor
+
+### Objetivo
+
+Substituir o campo `etiqueta` (singular, `String` livre desde a Parte 7) por uma coleção `etiquetas`, permitindo mais de uma etiqueta por card e eliminando a necessidade de uma classe CSS escrita à mão para cada etiqueta nova, ao associar uma cor fixa a cada valor possível diretamente no backend.
+
+### Implementação Realizada
+
+- Criação do `enum` `EtiquetaEnum`, no pacote `model`, com cinco constantes (`PROFISSIONAL`, `ESTUDOS`, `GITHUB`, `PRIORIDADE_ALTA`, `GEMINI`), cada uma associada a uma cor fixa (`corHex`) por meio de um construtor e um campo próprios do `enum`.
+- Anotação de `EtiquetaEnum` com `@JsonFormat(shape = JsonFormat.Shape.OBJECT)`, para que cada constante seja serializada como um objeto JSON, e não apenas como o nome da constante.
+- Alteração da entidade `Card`: o campo `etiqueta` foi removido e substituído por `etiquetas`, uma `List<EtiquetaEnum>` anotada com `@ElementCollection`, persistida em uma tabela auxiliar própria (sem entidade dedicada).
+- Alteração de `KanbanService.criar` e de `CardController.criar`, que deixaram de receber e repassar uma etiqueta: um card novo nasce com a coleção `etiquetas` vazia.
+- Alteração do modelo `Card` do frontend (`models/card.ts`): substituição do campo `etiqueta: string` por `etiquetas: Etiqueta[]`, com a nova interface `Etiqueta` (`name` e `corHex`).
+- Alteração de `card-item.html` e `card-item.ts`: o template passou a percorrer `card.etiquetas` com `@for`, renderizando uma `<span class="tag">` por etiqueta, com a cor vinda de `[style.background]="e.corHex"`; foi adicionado o método `formatarNome`, que converte o nome bruto da constante (por exemplo, `PRIORIDADE_ALTA`) para uma forma de leitura mais natural (`Prioridade Alta`).
+- Alteração de `card-item.scss`: remoção da cor fixa da classe `.tag` (agora definida por card, via `[style.background]`) e adição de espaçamento para o caso de mais de uma etiqueta no mesmo card.
+- Alteração de `KanbanApiService.criar` e de `app.ts`, que deixaram de enviar e de atribuir a etiqueta `"Geral"` na criação de um card.
+- Não foi construída, nesta etapa, nenhuma interface para atribuição de etiquetas a um card; a única forma de associá-las, por ora, é uma alteração direta na tabela correspondente do banco.
+
+### Dificuldades Identificadas Durante a Implementação
+
+A implementação inicial seguiu à risca o conteúdo do tutorial e não apresentou erro de compilação em nenhum dos dois projetos. A movimentação de cards entre colunas continuou funcionando normalmente, inclusive com persistência correta no MySQL. O problema surgiu ao testar a funcionalidade desta etapa: uma etiqueta associada manualmente a um card, por meio de `UPDATE card SET etiqueta = 'GITHUB' WHERE id = ...`, não aparecia no frontend, apesar de o valor estar corretamente gravado no banco.
+
+A investigação revelou três causas distintas, as duas últimas não descritas no tutorial original:
+
+1. **Coluna errada.** O comando `UPDATE` alterava a coluna `etiqueta` (singular), remanescente da Parte 7. Como a entidade `Card` desta parte não possui mais esse campo, e `spring.jpa.hibernate.ddl-auto=update` (configurado na Parte 12) apenas acrescenta estrutura ao banco, sem nunca remover uma coluna sem correspondência na entidade, essa coluna passou a ser ignorada por completo pelo backend, permanecendo na tabela como um resquício órfão. A coleção `etiquetas` (plural), introduzida por `@ElementCollection`, reside em uma tabela própria e distinta (`card_etiquetas`), até então vazia.
+2. **Ausência do campo `name` no JSON.** Reproduzida isoladamente com a biblioteca Jackson: `@JsonFormat(shape = JsonFormat.Shape.OBJECT)`, sozinha, faz o Jackson serializar cada constante de `EtiquetaEnum` incluindo um par chave-valor para cada método de acesso (`get*`) nela declarado — o que, com apenas `getCorHex()` declarado, produzia unicamente `{"corHex":"#29b6f6"}`, sem o campo `name` do qual o frontend depende (`card.etiquetas`, em `card-item.html`, e o parâmetro de `formatarNome`, em `card-item.ts`). Sem esse campo, `formatarNome(undefined)` lançaria um `TypeError` assim que um card com ao menos uma etiqueta fosse renderizado. A correção consistiu na adição de um método `getName()` a `EtiquetaEnum`, retornando `name()` (método presente em todo `enum` Java, com o nome da constante).
+3. **Risco de persistência ordinal.** O campo `etiquetas`, tal como apresentado inicialmente no tutorial, não trazia a anotação `@Enumerated(EnumType.STRING)`, com o mesmo risco já identificado na Parte 13 para o campo `coluna`: sem ela, o JPA persistiria, para cada etiqueta, apenas a posição numérica da constante em `EtiquetaEnum`, e não o seu nome. A correção consistiu na adição dessa anotação ao campo `etiquetas`.
+
+Como a tabela `card_etiquetas` já havia sido criada pelo Hibernate no formato incorreto (numérico) antes da correção do item 3, e `ddl-auto=update` também não altera o tipo de uma coluna já existente, foi necessário interromper o backend e excluir manualmente essa tabela (`DROP TABLE card_etiquetas;`) para que fosse recriada, já no formato textual, na inicialização seguinte. Após as três correções, uma nova associação de etiqueta, feita diretamente na tabela `card_etiquetas` (`INSERT INTO card_etiquetas (card_id, etiquetas) VALUES (...)`), passou a ser exibida corretamente no frontend, com a cor e o texto formatado esperados.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/model/EtiquetaEnum.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import com.fasterxml.jackson.annotation.JsonFormat;
+
+@JsonFormat(shape = JsonFormat.Shape.OBJECT)
+public enum EtiquetaEnum {
+    PROFISSIONAL("#7e57c2"),
+    ESTUDOS("#43a047"),
+    GITHUB("#29b6f6"),
+    PRIORIDADE_ALTA("#e53935"),
+    GEMINI("#fb8c00");
+
+    private final String corHex;
+
+    EtiquetaEnum(String corHex) {
+        this.corHex = corHex;
+    }
+
+    public String getName() {
+        return name();
+    }
+
+    public String getCorHex() {
+        return corHex;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.Id;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Enumerated(EnumType.STRING)
+    @ElementCollection(fetch = FetchType.EAGER)
+    private List<EtiquetaEnum> etiquetas = new ArrayList<>();
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public List<EtiquetaEnum> getEtiquetas() {
+        return etiquetas;
+    }
+
+    public void setEtiquetas(List<EtiquetaEnum> etiquetas) {
+        this.etiquetas = etiquetas;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll();
+    }
+
+    public Card criar(String titulo) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            repository.save(c);
+        });
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody Card novo) {
+        return service.criar(novo.getTitulo());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/app/models/card.ts`:
+
+```typescript
+export interface Etiqueta {
+  name: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  etiquetas: Etiqueta[];
+}
+```
+
+`src/app/card-item/card-item.ts`:
+
+```typescript
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Card } from '../models/card';
+
+@Component({
+  imports: [],
+  selector: 'app-card-item',
+  styleUrl: './card-item.scss',
+  templateUrl: './card-item.html',
+})
+export class CardItemComponent {
+  @Input({ required: true }) card!: Card;
+  @Output() remover = new EventEmitter<Card>();
+
+  formatarNome(nome: string): string {
+    return nome
+      .toLowerCase()
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, letra => letra.toUpperCase());
+  }
+}
+```
+
+`src/app/card-item/card-item.html`:
+
+```html
+<div class="card">
+  @for (e of card.etiquetas; track e.name) {
+    <span class="tag" [style.background]="e.corHex">{{ formatarNome(e.name) }}</span>
+  }
+  <strong>{{ card.titulo }}</strong>
+  <button class="remover" (click)="remover.emit(card)">×</button>
+</div>
+```
+
+`src/app/card-item/card-item.scss`:
+
+```scss
+.card { background: white; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; box-shadow: 0 1px 2px rgba(0,0,0,.15); position: relative; }
+.tag { display: inline-block; font-size: 0.7rem; color: white; border-radius: 4px; padding: 2px 6px; margin-bottom: 4px; margin-right: 4px; }
+.remover { position: absolute; top: 0.5rem; right: 0.5rem; border: none; background: transparent; cursor: pointer; font-size: 0.9rem; color: #999; }
+```
+
+`src/app/kanban-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar() {
+    return this.http.get<Card[]>(this.baseUrl);
+  }
+
+  criar(titulo: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/app.ts` (única alteração em relação à Parte 11: `adicionar` deixa de passar `'Geral'` a `api.criar`):
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { KanbanApiService } from './kanban-api.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private api = inject(KanbanApiService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  ngOnInit() {
+    this.api.listar().subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.api.mover(card.id, novaColuna).subscribe();
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.api.criar(titulo).subscribe(novo => {
+      coluna.push(novo);
+      this.cdr.markForCheck();
+    });
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.api.excluir(card.id).subscribe(() => {
+      const index = coluna.indexOf(card);
+      if (index >= 0) coluna.splice(index, 1);
+      this.cdr.markForCheck();
+    });
+  }
+}
+```
+
+### Descrição Técnica
+
+- `@ElementCollection` mapeia uma coleção de valores simples (aqui, `enum`s) associada a uma entidade, persistindo-a em uma tabela auxiliar própria, sem exigir a criação de uma entidade `Etiqueta` completa, com `id` e tabela dedicados. Essa entidade separada só se justificaria se etiquetas precisassem ser criadas ou editadas dinamicamente pelo usuário, o que não é um requisito deste projeto por ora.
+- `@Enumerated(EnumType.STRING)`, aplicada ao campo `etiquetas`, tem o mesmo papel já discutido na Parte 13 para o campo `coluna`: sem ela, o JPA persistiria, para cada elemento da coleção, apenas a posição numérica da constante correspondente em `EtiquetaEnum`, sujeita a corrupção silenciosa caso a ordem de declaração das constantes viesse a mudar.
+- `@JsonFormat(shape = JsonFormat.Shape.OBJECT)` instrui o Jackson a serializar cada constante de `EtiquetaEnum` como um objeto JSON, com um par chave-valor para cada um dos seus métodos de acesso (`get*`), em vez de apenas o nome da constante como uma string simples. O conjunto de campos presentes no objeto resultante depende exclusivamente dos métodos `get*` declarados no `enum`: com apenas `getCorHex()`, o objeto conteria somente `corHex`. A adição de `getName()`, retornando `name()` (método presente em todo `enum` Java, com o nome da constante conforme declarado no código), foi o que passou a incluir o campo `name` no JSON, do qual o template do card e o método `formatarNome` dependem.
+- `formatarNome(nome: string)`, no frontend, converte o nome bruto da constante (por exemplo, `PRIORIDADE_ALTA`) para uma forma de leitura mais natural (`Prioridade Alta`), sem exigir nenhuma tradução mantida manualmente no backend. Por depender do argumento `nome` já ser uma `string`, essa função presume que o campo `name` está presente no objeto recebido; a ausência desse campo faz `nome.toLowerCase()` lançar `TypeError: Cannot read properties of undefined`.
+- `spring.jpa.hibernate.ddl-auto=update` (Parte 12) aplica ao esquema do banco apenas alterações aditivas: cria tabelas e colunas ausentes, mas nunca remove uma coluna ou tabela que deixou de ter correspondência na entidade, nem altera o tipo de uma coluna já existente. Por essa razão, a remoção do campo `etiqueta` (singular) desta entidade não removeu a coluna correspondente, já criada em uma parte anterior, e a correção da anotação `@Enumerated` sobre `etiquetas`, após a tabela `card_etiquetas` já existir no formato numérico, exigiu a exclusão manual dessa tabela para que fosse recriada no formato correto.
+- O contrato de criação de card (`POST /cards`) permanece aceitando um `Card` completo no corpo da requisição, mas `KanbanService.criar` passou a ignorar qualquer coleção de etiquetas eventualmente enviada, atribuindo sempre uma lista vazia ao novo card; a atribuição automática da etiqueta `"Geral"`, existente desde a Parte 7, foi removida.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@ElementCollection`** | Anotação JPA para mapear uma coleção de valores simples (não entidades completas) associada a uma entidade dona, persistida em uma tabela auxiliar. |
+| **`@Enumerated(EnumType.STRING)`** | Anotação JPA que faz a persistência de um `enum` (ou de uma coleção de `enum`s) gravar o nome textual da constante, em vez da sua posição numérica. |
+| **`@JsonFormat(shape = JsonFormat.Shape.OBJECT)`** | Anotação do Jackson que serializa um `enum` como um objeto JSON, com um campo para cada método de acesso (`get*`) nele declarado. |
+| **`name()`** (Java) | Método presente em todo `enum` Java, que devolve o nome da constante tal como declarado no código-fonte. |
+| **`TypeError`** (JavaScript/TypeScript) | Exceção lançada ao tentar executar uma operação sobre um valor de tipo incompatível, como chamar um método de `string` sobre `undefined`. |
+| **`[style.background]`** | Vínculo de propriedade do Angular que define diretamente uma propriedade CSS a partir de uma expressão. |
+| **Enum com atributo** (Java) | Um `enum` pode ter campos e construtor próprios, permitindo associar dados fixos (aqui, uma cor) a cada constante. |
+
+### Resultado
+
+Após a correção das três causas identificadas — remoção da coluna obsoleta como origem do dado a ser buscado, adição de `getName()` a `EtiquetaEnum` e de `@Enumerated(EnumType.STRING)` ao campo `etiquetas`, com a consequente recriação da tabela `card_etiquetas` —, uma etiqueta inserida manualmente na tabela correta passou a ser exibida no frontend com a cor e o texto formatado esperados, conforme validado por meio de captura de tela. O fluxo normal do frontend (listagem, criação, movimentação entre colunas e exclusão de cards) permaneceu funcional durante todo o processo, inclusive antes da correção, confirmando que o problema estava isolado à exibição de etiquetas.
+
+<p align="center">
+  <img src="000-Midia_e_Anexos/2026-09-21-19-29-27.png" alt="" width="1024">
+</p>
+
+<p align="center">
+  <img src="000-Midia_e_Anexos/2026-09-21-19-29-44.png" alt="" width="1024">
 </p>
 
 ---

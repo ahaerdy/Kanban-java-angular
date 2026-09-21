@@ -21,8 +21,8 @@ public class KanbanService {
         return repository.findAll();
     }
 
-    public Card criar(String titulo, String etiqueta) {
-        var novo = new Card(UUID.randomUUID().toString(), titulo, etiqueta, ColunaEnum.A_FAZER);
+    public Card criar(String titulo) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
         return repository.save(novo);
     }
 
