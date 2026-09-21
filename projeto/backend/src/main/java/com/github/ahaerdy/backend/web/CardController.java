@@ -5,7 +5,6 @@ import com.github.ahaerdy.backend.service.KanbanService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @CrossOrigin(origins = "http://localhost:4200")
@@ -29,8 +28,8 @@ public class CardController {
     }
 
     @PutMapping("/{id}/coluna")
-    public void mover(@PathVariable String id, @RequestBody Map<String, String> body) {
-        service.mover(id, body.get("coluna"));
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
     }
 
     @DeleteMapping("/{id}")

@@ -1,6 +1,8 @@
 package com.github.ahaerdy.backend.model;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 
 @Entity
@@ -10,12 +12,14 @@ public class Card {
     private String id;
     private String titulo;
     private String etiqueta;
-    private String coluna;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
 
     public Card() {
     }
 
-    public Card(String id, String titulo, String etiqueta, String coluna) {
+    public Card(String id, String titulo, String etiqueta, ColunaEnum coluna) {
         this.id = id;
         this.titulo = titulo;
         this.etiqueta = etiqueta;
@@ -46,11 +50,11 @@ public class Card {
         this.etiqueta = etiqueta;
     }
 
-    public String getColuna() {
+    public ColunaEnum getColuna() {
         return coluna;
     }
 
-    public void setColuna(String coluna) {
+    public void setColuna(ColunaEnum coluna) {
         this.coluna = coluna;
     }
 }
