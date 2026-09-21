@@ -1,0 +1,17 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: kanban-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: kanban
+      MYSQL_USER: kanban
+      MYSQL_PASSWORD: kanban
+      MYSQL_ROOT_PASSWORD: kanban_root
+    ports:
+      - "3306:3306"
+    volumes:
+      - kanban_mysql_data:/var/lib/mysql
+
+volumes:
+  kanban_mysql_data:
