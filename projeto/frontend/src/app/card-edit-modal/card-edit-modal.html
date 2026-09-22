@@ -1,0 +1,22 @@
+<div class="backdrop">
+  <div class="modal" cdkDrag>
+    <div class="cabecalho-modal" cdkDragHandle>Editar Card</div>
+
+    <label>Título</label>
+    <input #tituloRef [value]="titulo" />
+
+    <label>Etiqueta</label>
+    <input #etiquetaNomeRef [value]="etiquetaNome" placeholder="ex.: Urgente" />
+
+    <label>Cor da etiqueta (hex)</label>
+    <input #etiquetaCorRef [value]="etiquetaCor" placeholder="#e53935" />
+
+    <label>Descrição</label>
+    <textarea #descricaoRef>{{ descricao }}</textarea>
+
+    <div class="acoes">
+      <button (click)="cancelar.emit()">Cancelar</button>
+      <button (click)="confirmar(tituloRef.value, etiquetaNomeRef.value, etiquetaCorRef.value, descricaoRef.value)">Salvar</button>
+    </div>
+  </div>
+</div>

@@ -3459,9 +3459,159 @@ Clique em "Editar" em um card qualquer; o modal deve aparecer centralizado na te
 
 ---
 
+## Parte 18 — Corrigindo o Arraste e o Redimensionamento do Modal
+
+### A mentalidade desta parte
+
+Ao testar a Parte 17, dois dos três comportamentos prometidos para o modal falharam: arrastar pelo cabeçalho fazia surgir um segundo modal idêntico, sobreposto ao primeiro, que se movia sozinho e desaparecia ao soltar o botão do mouse — enquanto o modal original ficava parado no lugar; e tentar redimensionar pela alça no canto inferior direito produzia exatamente o mesmo sintoma, sem nunca redimensionar de fato. Esta parte existe só para corrigir esses dois pontos; nada além do arraste e do redimensionamento do modal muda.
+
+### O diagnóstico
+
+Os dois sintomas têm uma origem comum: `cdkDrag`, aplicado ao `<div class="modal">` na Parte 17.
+
+Primeiro, o "modal fantasma" ao arrastar pelo cabeçalho não é, na raiz, um defeito de implementação — é o próprio comportamento documentado do `cdkDrag`: por padrão, o Angular CDK cria um elemento de **preview**, um clone visual que acompanha o cursor durante o arraste, enquanto o elemento original permanece parado em sua posição até o botão ser solto, quando o preview é removido. Sem nenhum CSS adicional para ocultar o original durante o arraste — algo que a Parte 17 não fez —, os dois ficam visíveis ao mesmo tempo, dando exatamente a impressão de um "segundo modal" se movendo por cima do primeiro.
+
+Segundo, e mais grave: `cdkDrag`, aplicado ao mesmo elemento que também usa a propriedade CSS `resize: both` (o redimensionamento nativo do navegador), faz os dois mecanismos disputarem os mesmos eventos de mouse na área do canto inferior direito. O resultado observado é o mesmo "fantasma" do primeiro caso, mas o redimensionamento nativo nunca chega a acontecer: o `cdkDrag` captura o gesto antes.
+
+A correção remove `cdkDrag`/`cdkDragHandle` do modal por completo, substituindo-os por um pequeno controlador de arraste escrito à mão, com eventos de mouse nativos. Sem nenhuma biblioteca de arraste envolvida, não há como surgir um clone, e não há mais nada disputando eventos com o redimensionamento nativo.
+
+### Arquivos alterados
+
+`src/app/card-edit-modal/card-edit-modal.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Component, ElementRef, EventEmitter, HostListener, Input, OnInit, Output, ViewChild } from '@angular/core';
+import { Card, CardEdicao } from '../models/card';
+
+@Component({
+  imports: [],
+  selector: 'app-card-edit-modal',
+  styleUrl: './card-edit-modal.scss',
+  templateUrl: './card-edit-modal.html',
+})
+export class CardEditModalComponent implements OnInit {
+  @Input({ required: true }) card!: Card;
+  @Output() salvar = new EventEmitter<CardEdicao>();
+  @Output() cancelar = new EventEmitter<void>();
+
+  @ViewChild('modalRef') modalRef!: ElementRef<HTMLDivElement>;
+
+  titulo = '';
+  descricao = '';
+  etiquetaNome = '';
+  etiquetaCor = '';
+
+  private arrastando = false;
+  private offsetX = 0;
+  private offsetY = 0;
+
+  ngOnInit() {
+    this.titulo = this.card.titulo;
+    this.descricao = this.card.descricao ?? '';
+    this.etiquetaNome = this.card.etiqueta?.nome ?? '';
+    this.etiquetaCor = this.card.etiqueta?.corHex ?? '';
+  }
+
+  iniciarArraste(evento: MouseEvent) {
+    const modal = this.modalRef.nativeElement;
+    const retangulo = modal.getBoundingClientRect();
+
+    // Sai do fluxo centralizado do flexbox e passa a se posicionar
+    // por coordenadas fixas de tela, a partir da posição atual.
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    modal.style.top = `${retangulo.top}px`;
+    modal.style.left = `${retangulo.left}px`;
+
+    this.arrastando = true;
+    this.offsetX = evento.clientX - retangulo.left;
+    this.offsetY = evento.clientY - retangulo.top;
+    evento.preventDefault();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  mover(evento: MouseEvent) {
+    if (!this.arrastando) return;
+    const modal = this.modalRef.nativeElement;
+    modal.style.left = `${evento.clientX - this.offsetX}px`;
+    modal.style.top = `${evento.clientY - this.offsetY}px`;
+  }
+
+  @HostListener('document:mouseup')
+  pararArraste() {
+    this.arrastando = false;
+  }
+
+  confirmar(titulo: string, etiquetaNome: string, etiquetaCor: string, descricao: string) {
+    const tituloLimpo = titulo.trim();
+    if (!tituloLimpo) return;
+
+    const nome = etiquetaNome.trim();
+    this.salvar.emit({
+      id: this.card.id,
+      titulo: tituloLimpo,
+      descricao: descricao.trim() || null,
+      etiqueta: nome ? { nome, corHex: etiquetaCor.trim() || '#999999' } : null,
+    });
+  }
+}
+```
+
+`src/app/card-edit-modal/card-edit-modal.html` — substitua todo o conteúdo:
+
+```html
+<div class="backdrop">
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Editar Card</div>
+
+    <label>Título</label>
+    <input #tituloRef [value]="titulo" />
+
+    <label>Etiqueta</label>
+    <input #etiquetaNomeRef [value]="etiquetaNome" placeholder="ex.: Urgente" />
+
+    <label>Cor da etiqueta (hex)</label>
+    <input #etiquetaCorRef [value]="etiquetaCor" placeholder="#e53935" />
+
+    <label>Descrição</label>
+    <textarea #descricaoRef>{{ descricao }}</textarea>
+
+    <div class="acoes">
+      <button (click)="cancelar.emit()">Cancelar</button>
+      <button (click)="confirmar(tituloRef.value, etiquetaNomeRef.value, etiquetaCorRef.value, descricaoRef.value)">Salvar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/card-edit-modal/card-edit-modal.scss` — sem alterações em relação à Parte 17.
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, o `cdkDrag` que arrasta cards entre colunas do board (Parte 6) continua exatamente como estava, em `app.html`; o problema desta parte era específico do modal, não da biblioteca em si.
+
+### Explicando
+
+- `iniciarArraste`, associado a `(mousedown)` no cabeçalho, tira o modal do fluxo centralizado do flexbox: `modal.style.position = 'fixed'` remove-o do posicionamento controlado por `.backdrop { display: flex; align-items: center; justify-content: center; }`, e `top`/`left` são inicializados com a posição atual do modal (via `getBoundingClientRect()`), para que ele não salte de lugar no instante em que o arraste começa. `offsetX`/`offsetY` guardam a distância entre o ponto exato clicado e o canto superior esquerdo do modal, para que o arraste continue a partir de onde o cursor pegou o modal, e não do seu canto.
+- `@HostListener('document:mousemove', ...)` e `@HostListener('document:mouseup')` são decorators do Angular que associam métodos do componente a eventos do `document` inteiro — necessário porque o cursor do usuário pode se mover mais rápido que o modal, saindo momentaneamente da área do próprio elemento; escutar no `document` garante que o arraste continue mesmo que o cursor passe por cima de outro elemento da página.
+- A flag `arrastando` faz `mover` ignorar todo evento de `mousemove` fora de um arraste em andamento — sem ela, o listener, registrado permanentemente no `document`, executaria a cada movimento do mouse na página inteira, o tempo todo.
+- Como nenhum elemento é clonado nesta implementação — o próprio elemento do modal (`this.modalRef.nativeElement`) é o que tem `top`/`left` atualizados diretamente —, não há como surgir um segundo elemento visualmente distinto do primeiro. É essa ausência de clonagem, e não algum tratamento especial do redimensionamento, que também resolve o segundo sintoma: sem `cdkDrag` no elemento, `resize: both` (inalterado desde a Parte 17) volta a ser o único mecanismo escutando eventos de mouse naquela área, e funciona sem concorrência.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@HostListener`** | Decorator do Angular que associa um método do componente a um evento do DOM — aqui, `document:mousemove` e `document:mouseup` — sem precisar registrar e remover o listener manualmente. |
+| **`getBoundingClientRect()`** | Método nativo do DOM que devolve a posição e o tamanho atuais de um elemento na tela, usado aqui para capturar onde o modal está no instante em que o arraste começa. |
+| **Preview** (Angular CDK) | Elemento clonado que o `cdkDrag` cria por padrão ao iniciar um arraste, para servir de representação visual seguindo o cursor; documentado, mas responsável pelo sintoma de "fantasma" observado nesta parte, quando usado sem CSS adicional para ocultar o elemento original durante o arraste. |
+
+### 🧪 Teste rápido
+
+Abra o modal de edição de um card, clique e arraste pelo cabeçalho: um único modal deve se mover, sem nenhuma duplicata visível, seguindo o cursor até o botão ser solto. Solte o botão do mouse e confirme que o modal permanece exatamente onde foi largado. Em seguida, posicione o cursor sobre o canto inferior direito do modal (o cursor deve virar uma seta dupla) e arraste: o modal deve crescer ou encolher normalmente, sem nenhuma duplicata aparecendo. Repita ambos os testes algumas vezes, inclusive alternando entre arrastar e redimensionar no mesmo modal aberto, antes de clicar em "Salvar" ou "Cancelar".
+
+---
+
 ## Encerrando o projeto: por que paramos aqui
 
-Com a Parte 17, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards editáveis (título, descrição e etiqueta livre), arrastar-e-soltar, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A própria Parte 17, além disso, é um exemplo do método reagindo a uma mudança de requisito: o catálogo fixo de etiquetas da Parte 14 não foi remendado para caber uma cor livre — foi substituído, quando a necessidade real deixou de caber no desenho anterior. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
+Com a Parte 18, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards editáveis (título, descrição e etiqueta livre) por um modal que agora arrasta e redimensiona corretamente, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17, além disso, é um exemplo do método reagindo a uma mudança de requisito — o catálogo fixo de etiquetas da Parte 14 não foi remendado para caber uma cor livre, foi substituído —, e a Parte 18 é um lembrete de que nem toda implementação sai correta na primeira tentativa: o teste, aqui como em cada parte anterior, não é opcional. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
 
 ### Tentações que ficaram de fora, e por quê
 

@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Card } from './models/card';
+import { Card, CardEdicao } from './models/card';
 
 @Injectable({ providedIn: 'root' })
 export class KanbanApiService {
@@ -17,6 +17,11 @@ export class KanbanApiService {
 
   mover(id: string, coluna: string) {
     return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
   }
 
   excluir(id: string) {

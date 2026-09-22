@@ -1,6 +1,7 @@
 package com.github.ahaerdy.backend.web;
 
 import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
 import com.github.ahaerdy.backend.service.KanbanService;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,6 +31,14 @@ public class CardController {
     @PutMapping("/{id}/coluna")
     public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
         service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+                ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+                : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
     }
 
     @DeleteMapping("/{id}")

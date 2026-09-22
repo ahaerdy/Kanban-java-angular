@@ -1,14 +1,13 @@
 package com.github.ahaerdy.backend.model;
 
-import jakarta.persistence.ElementCollection;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-
-import java.util.ArrayList;
-import java.util.List;
 
 @Entity
 public class Card {
@@ -16,13 +15,17 @@ public class Card {
     @Id
     private String id;
     private String titulo;
+    private String descricao;
 
     @Enumerated(EnumType.STRING)
     private ColunaEnum coluna;
 
-    @Enumerated(EnumType.STRING)
-    @ElementCollection(fetch = FetchType.EAGER)
-    private List<EtiquetaEnum> etiquetas = new ArrayList<>();
+    @Embedded
+    @AttributeOverrides({
+            @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+            @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
 
     public Card() {
     }
@@ -49,6 +52,14 @@ public class Card {
         this.titulo = titulo;
     }
 
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
     public ColunaEnum getColuna() {
         return coluna;
     }
@@ -57,11 +68,11 @@ public class Card {
         this.coluna = coluna;
     }
 
-    public List<EtiquetaEnum> getEtiquetas() {
-        return etiquetas;
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
     }
 
-    public void setEtiquetas(List<EtiquetaEnum> etiquetas) {
-        this.etiquetas = etiquetas;
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
     }
 }

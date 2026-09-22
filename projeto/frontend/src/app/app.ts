@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
 import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
-import { Card } from './models/card';
+import { Card, CardEdicao } from './models/card';
 import { CardItemComponent } from './card-item/card-item';
 import { CardCountComponent } from './card-count/card-count';
 import { KanbanStateService } from './kanban-state.service';
@@ -54,6 +54,10 @@ export class App implements OnInit {
   adicionar(coluna: Card[], titulo: string) {
     if (!titulo.trim()) return;
     this.state.criar(titulo);
+  }
+
+  editar(edicao: CardEdicao) {
+    this.state.editar(edicao);
   }
 
   remover(coluna: Card[], card: Card) {

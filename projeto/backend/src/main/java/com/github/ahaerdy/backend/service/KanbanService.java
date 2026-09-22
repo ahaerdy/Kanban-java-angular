@@ -2,6 +2,7 @@ package com.github.ahaerdy.backend.service;
 
 import com.github.ahaerdy.backend.model.Card;
 import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
 import com.github.ahaerdy.backend.repository.CardRepository;
 import org.springframework.stereotype.Service;
 
@@ -29,6 +30,15 @@ public class KanbanService {
     public void mover(String id, ColunaEnum novaColuna) {
         repository.findById(id).ifPresent(c -> {
             c.setColuna(novaColuna);
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
             repository.save(c);
         });
     }

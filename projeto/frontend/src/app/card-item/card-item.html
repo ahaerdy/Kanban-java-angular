@@ -1,7 +1,19 @@
 <div class="card">
-  @for (e of card.etiquetas; track e.name) {
-    <span class="tag" [style.background]="e.corHex">{{ formatarNome(e.name) }}</span>
+  @if (card.etiqueta) {
+    <span class="tag" [style.background]="card.etiqueta.corHex">{{ card.etiqueta.nome }}</span>
   }
-  <strong>{{ card.titulo }}</strong>
-  <button class="remover" (click)="remover.emit(card)">×</button>
+  <div class="cabecalho">
+    <strong>{{ card.titulo }}</strong>
+    <div class="acoes-card">
+      <button class="editar" (click)="editando = true">Editar</button>
+      <button class="remover" (click)="remover.emit(card)">×</button>
+    </div>
+  </div>
+  @if (card.descricao) {
+    <p class="descricao">{{ card.descricao }}</p>
+  }
 </div>
+
+@if (editando) {
+  <app-card-edit-modal [card]="card" (salvar)="salvar($event)" (cancelar)="editando = false" />
+}

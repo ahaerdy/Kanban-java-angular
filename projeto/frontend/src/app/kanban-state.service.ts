@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { KanbanApiService } from './kanban-api.service';
-import { Card } from './models/card';
+import { Card, CardEdicao } from './models/card';
 
 @Injectable({ providedIn: 'root' })
 export class KanbanStateService {
@@ -19,6 +19,10 @@ export class KanbanStateService {
 
   criar(titulo: string) {
     this.api.criar(titulo).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
   }
 
   excluir(id: string) {
