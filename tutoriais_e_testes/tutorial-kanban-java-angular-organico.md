@@ -2609,6 +2609,8 @@ export class App implements OnInit {
 
 Crie um card pelo frontend; ele deve aparecer sem nenhuma etiqueta. Confirme, com `curl http://localhost:8080/cards`, que o JSON de um card traz `"etiquetas":[]` e que, para os `enum`s expostos por outros endpoints desta parte, um objeto de etiqueta contém tanto `"name"` quanto `"corHex"` — a ausência de `"name"` indica que `getName()` não foi adicionado a `EtiquetaEnum`. Associe então uma etiqueta a um card existente através de uma chamada direta ao banco (o endpoint de edição de etiquetas não foi construído nesta etapa): com o backend parado, insira a etiqueta diretamente na tabela da coleção, por exemplo `INSERT INTO card_etiquetas (card_id, etiquetas) VALUES ('<id-do-card>', 'GITHUB');`. Suba o backend novamente, recarregue o frontend e confirme que a etiqueta aparece com a cor correspondente à constante em `EtiquetaEnum`, e com o texto formatado (por exemplo, `PRIORIDADE_ALTA` exibido como "Prioridade Alta").
 
+*(Nota: o catálogo fixo de `EtiquetaEnum` durou até a Parte 17, quando a necessidade de cor livre por card, digitada pelo usuário, tornou um enum de cor fixa incompatível com o requisito — ver Parte 17.)*
+
 ---
 
 ## Parte 15 — Sincronizando o estado no frontend: um `KanbanStateService`
@@ -2690,7 +2692,9 @@ Para exibi-lo, adicione a linha `<app-card-count />` em algum ponto de `src/app/
 
 ### Uma fronteira explícita do que foi implementado
 
-`App`, hoje, ainda gerencia seus três arrays (`aFazer`, `emAndamento`, `concluido`) diretamente, chamando `KanbanApiService` por conta própria, como ficou desde a Parte 11. Migrar `App` para consumir `KanbanStateService` no lugar de `KanbanApiService` diretamente é possível, mas exigiria reconciliar o estado assíncrono do serviço (`cards$`, uma lista única) com os três arrays concretos que o `cdkDropListData` do Angular CDK exige. Uma forma de fazer isso seria `App` se inscrever em `cards$` dentro de `ngOnInit`, dividindo o resultado nos três arrays a cada emissão, de forma equivalente ao que a chamada a `api.listar()` já faz hoje (incluindo a mesma chamada a `this.cdr.markForCheck()`, pelo mesmo motivo explicado na Parte 9). Essa migração não foi realizada neste tutorial: nenhum segundo consumidor do estado do board, além do próprio `App`, existe de fato no projeto (`CardCountComponent`, acima, é apenas ilustrativo), então a duplicação de lógica de sincronização entre `App` e `KanbanStateService` ainda não gera nenhum problema real a resolver.
+`App`, hoje, ainda gerencia seus três arrays (`aFazer`, `emAndamento`, `concluido`) diretamente, chamando `KanbanApiService` por conta própria, como ficou desde a Parte 11. Migrar `App` para consumir `KanbanStateService` no lugar de `KanbanApiService` diretamente é possível, mas exigiria reconciliar o estado assíncrono do serviço (`cards$`, uma lista única) com os três arrays concretos que o `cdkDropListData` do Angular CDK exige. Uma forma de fazer isso seria `App` se inscrever em `cards$` dentro de `ngOnInit`, dividindo o resultado nos três arrays a cada emissão, de forma equivalente ao que a chamada a `api.listar()` já faz hoje (incluindo a mesma chamada a `this.cdr.markForCheck()`, pelo mesmo motivo explicado na Parte 9). Essa migração não foi realizada nesta parte: nenhum segundo consumidor do estado do board, além do próprio `App`, existe de fato no projeto (`CardCountComponent`, acima, é apenas ilustrativo), então a duplicação de lógica de sincronização entre `App` e `KanbanStateService` ainda não gera nenhum problema real a resolver.
+
+*(Nota: essa fronteira durou pouco — ver Parte 16, logo abaixo, para o momento em que `CardCountComponent` deixou de ser apenas ilustrativo.)*
 
 ### Glossário — Parte 15
 
@@ -2708,9 +2712,756 @@ Com `CardCountComponent` adicionado a `app.html` (conforme descrito acima), o n�
 
 ---
 
+## Parte 16 — Migrando `App` para o `KanbanStateService`
+
+### A mentalidade desta parte
+
+A fronteira deixada em aberto na Parte 15 previa exatamente esta situação: `CardCountComponent` foi adicionado a `app.html`, mas continuou mostrando `0 cards no total`, mesmo com cards existentes no board. A causa é a mesma descrita naquela parte: `App` seguia chamando `KanbanApiService` diretamente, sem nunca invocar nenhum método de `KanbanStateService`; o `BehaviorSubject` desse serviço, portanto, nunca recebia um `.next(...)`, e permanecia parado no valor inicial (`[]`) para sempre. `CardCountComponent`, que se inscreve apenas em `cards$`, não tinha como saber de cards que só existiam nos arrays internos de `App`.
+
+O que era, na Parte 15, uma duplicação sem problema real a resolver, passou a ser um sintoma visível assim que um segundo consumidor de verdade (`CardCountComponent`, exibido na tela) entrou em cena. Este é o próprio gatilho `#5` do catálogo se manifestando: um dado mudou (a lista de cards), e algo que dependia dele (`CardCountComponent`) não foi avisado, porque a mudança nunca passou pelo canal que ele escuta (`KanbanStateService.cards$`).
+
+### Arquivo alterado
+
+`src/app/app.ts` — substitua todo o conteúdo por:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+Nenhum outro arquivo precisou ser alterado: `app.html`, `card-count.ts`, `card-count.html` e `kanban-state.service.ts` permanecem exatamente como nas Partes 15 e anteriores.
+
+### Explicando
+
+- A troca central é `inject(KanbanApiService)` por `inject(KanbanStateService)`. `App` deixa de ser um consumidor direto da API HTTP e passa a ser só mais um consumidor do estado compartilhado, no mesmo nível que `CardCountComponent`.
+- Em `ngOnInit`, a assinatura passou de `this.api.listar().subscribe(...)` para `this.state.cards$.subscribe(...)`, mantendo a mesma lógica de dividir a lista única nos três arrays exigidos pelo `cdkDropListData`. A chamada a `this.state.carregar()`, logo em seguida, é o que efetivamente dispara a primeira emissão: como o `BehaviorSubject` nasce com `[]`, alguém precisa chamar `carregar()` ao menos uma vez para que a lista real chegue a `cards$` — e, agora, esse alguém é `App`, não mais um passo manual pelo console do navegador.
+- `drop`, `adicionar` e `remover` passaram a chamar `state.mover()`, `state.criar()` e `state.excluir()` em vez dos métodos equivalentes de `KanbanApiService`. Como cada um desses métodos de `KanbanStateService` já chama `carregar()` internamente ao final (ver Parte 15), a atualização otimista manual que existia desde a Parte 11 (`coluna.push(novo)` em `adicionar`, `coluna.splice(...)` em `remover`) deixou de ser necessária: a nova lista completa chega pela própria assinatura em `cards$`, que recalcula os três arrays e cobre também os casos de criação e exclusão.
+- Um efeito colateral, pequeno e sem sintoma perceptível em `localhost`: mover um card entre colunas por arrastar e soltar passou a depender da resposta da chamada ao backend para a interface se atualizar (antes, a interface mudava imediatamente, e a chamada à API acontecia à parte). A reordenação de cards dentro da mesma coluna, que nunca gerou chamada à API (Parte 11), continua imediata, pois `moveItemInArray` segue sendo aplicado diretamente sobre o array antes de qualquer envolvimento do serviço.
+- `CardCountComponent` não precisou de nenhuma alteração: ele já dependia apenas de `cards$`, exatamente como projetado na Parte 15. A diferença é que, agora, existe alguém — `App` — de fato alimentando esse `Observable` com dados reais.
+
+### 🧪 Teste rápido
+
+Recarregue o frontend: o contador deve mostrar o total correto de cards logo de início (sem precisar de nenhum comando manual no console, diferente do teste da Parte 15). Crie um novo card pelo botão "+" e confirme que o contador incrementa; exclua um card e confirme que decrementa; mova um card entre colunas e confirme que o total permanece o mesmo. Em nenhum desses casos deve ser necessário recarregar a página manualmente para o contador refletir a mudança.
+
+---
+
+## Parte 17 — Editando um Card por um Modal Arrastável
+
+### A mentalidade desta parte
+
+Até aqui, o único jeito de mudar um card depois de criado é excluí-lo e criar outro — perdendo etiqueta, coluna e qualquer outro dado no processo. É hora de permitir editar um card no lugar: título, uma descrição livre (exibida em fonte menor, sem negrito, abaixo do título) e uma etiqueta com nome e cor totalmente livres, digitados pelo próprio usuário.
+
+Esse último ponto — cor livre, digitada como código hexadecimal — entra em conflito direto com o desenho da Parte 14: `EtiquetaEnum` associa uma cor **fixa** a cada nome de etiqueta, e um card guarda uma **lista** dessas etiquetas fixas. Se a cor passa a ser livre por card, ela deixa de fazer sentido presa a uma constante de `enum` compartilhada por todos os cards. A escolha desta parte é: abandonar o catálogo fixo, e passar a tratar etiqueta como um valor livre — nome e cor, ambos digitados —, com **no máximo uma etiqueta por card**, não mais uma lista. É uma extração revertendo uma decisão anterior, tão legítima quanto qualquer outra: a Parte 14 resolveu o problema que existia então (etiquetas fixas, repetidas, exigindo CSS manual); este problema mudou de forma, e o desenho precisa acompanhar.
+
+### Arquivos alterados no backend
+
+`src/main/java/com/github/ahaerdy/backend/model/EtiquetaEnum.java` — **exclua este arquivo**; não é mais usado.
+
+`src/main/java/com/github/ahaerdy/backend/model/Etiqueta.java` — arquivo novo, substituindo o `enum`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.Embeddable;
+
+@Embeddable
+public class Etiqueta {
+
+    private String nome;
+    private String corHex;
+
+    public Etiqueta() {
+    }
+
+    public Etiqueta(String nome, String corHex) {
+        this.nome = nome;
+        this.corHex = corHex;
+    }
+
+    public String getNome() {
+        return nome;
+    }
+
+    public void setNome(String nome) {
+        this.nome = nome;
+    }
+
+    public String getCorHex() {
+        return corHex;
+    }
+
+    public void setCorHex(String corHex) {
+        this.corHex = corHex;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java` — substitua todo o conteúdo (o campo `etiquetas`, uma lista de `EtiquetaEnum`, dá lugar a `etiqueta`, um único valor embutido; entra também `descricao`):
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String descricao;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+        @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/EtiquetaRequest.java` — arquivo novo:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+public record EtiquetaRequest(String nome, String corHex) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardEditRequest.java` — arquivo novo:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+public record CardEditRequest(String titulo, String descricao, EtiquetaRequest etiqueta) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody Card novo) {
+        return service.criar(novo.getTitulo());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll();
+    }
+
+    public Card criar(String titulo) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+### Arquivos criados no frontend
+
+`src/app/card-edit-modal/card-edit-modal.ts` — arquivo novo:
+
+```typescript
+import { Component, EventEmitter, Input, OnInit, Output } from '@angular/core';
+import { DragDropModule } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from '../models/card';
+
+@Component({
+  imports: [DragDropModule],
+  selector: 'app-card-edit-modal',
+  styleUrl: './card-edit-modal.scss',
+  templateUrl: './card-edit-modal.html',
+})
+export class CardEditModalComponent implements OnInit {
+  @Input({ required: true }) card!: Card;
+  @Output() salvar = new EventEmitter<CardEdicao>();
+  @Output() cancelar = new EventEmitter<void>();
+
+  titulo = '';
+  descricao = '';
+  etiquetaNome = '';
+  etiquetaCor = '';
+
+  ngOnInit() {
+    this.titulo = this.card.titulo;
+    this.descricao = this.card.descricao ?? '';
+    this.etiquetaNome = this.card.etiqueta?.nome ?? '';
+    this.etiquetaCor = this.card.etiqueta?.corHex ?? '';
+  }
+
+  confirmar(titulo: string, etiquetaNome: string, etiquetaCor: string, descricao: string) {
+    const tituloLimpo = titulo.trim();
+    if (!tituloLimpo) return;
+
+    const nome = etiquetaNome.trim();
+    this.salvar.emit({
+      id: this.card.id,
+      titulo: tituloLimpo,
+      descricao: descricao.trim() || null,
+      etiqueta: nome ? { nome, corHex: etiquetaCor.trim() || '#999999' } : null,
+    });
+  }
+}
+```
+
+`src/app/card-edit-modal/card-edit-modal.html` — arquivo novo:
+
+```html
+<div class="backdrop">
+  <div class="modal" cdkDrag>
+    <div class="cabecalho-modal" cdkDragHandle>Editar Card</div>
+
+    <label>Título</label>
+    <input #tituloRef [value]="titulo" />
+
+    <label>Etiqueta</label>
+    <input #etiquetaNomeRef [value]="etiquetaNome" placeholder="ex.: Urgente" />
+
+    <label>Cor da etiqueta (hex)</label>
+    <input #etiquetaCorRef [value]="etiquetaCor" placeholder="#e53935" />
+
+    <label>Descrição</label>
+    <textarea #descricaoRef>{{ descricao }}</textarea>
+
+    <div class="acoes">
+      <button (click)="cancelar.emit()">Cancelar</button>
+      <button (click)="confirmar(tituloRef.value, etiquetaNomeRef.value, etiquetaCorRef.value, descricaoRef.value)">Salvar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/card-edit-modal/card-edit-modal.scss` — arquivo novo:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; min-width: 260px; min-height: 260px; resize: both; overflow: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; margin-bottom: 0.25rem; }
+.modal label { font-size: 0.8rem; color: #555; margin-top: 0.25rem; }
+.modal input, .modal textarea { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.modal textarea { resize: none; min-height: 3rem; }
+.acoes { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
+.acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes button:last-child { background: #1976d2; color: white; border-color: #1976d2; }
+```
+
+### Arquivos alterados no frontend
+
+`src/app/models/card.ts` — substitua todo o conteúdo:
+
+```typescript
+export interface Etiqueta {
+  nome: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+
+export interface CardEdicao {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+```
+
+`src/app/card-item/card-item.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Card, CardEdicao } from '../models/card';
+import { CardEditModalComponent } from '../card-edit-modal/card-edit-modal';
+
+@Component({
+  imports: [CardEditModalComponent],
+  selector: 'app-card-item',
+  styleUrl: './card-item.scss',
+  templateUrl: './card-item.html',
+})
+export class CardItemComponent {
+  @Input({ required: true }) card!: Card;
+  @Output() remover = new EventEmitter<Card>();
+  @Output() editar = new EventEmitter<CardEdicao>();
+
+  editando = false;
+
+  salvar(edicao: CardEdicao) {
+    this.editando = false;
+    this.editar.emit(edicao);
+  }
+}
+```
+
+`src/app/card-item/card-item.html` — substitua todo o conteúdo:
+
+```html
+<div class="card">
+  @if (card.etiqueta) {
+    <span class="tag" [style.background]="card.etiqueta.corHex">{{ card.etiqueta.nome }}</span>
+  }
+  <div class="cabecalho">
+    <strong>{{ card.titulo }}</strong>
+    <div class="acoes-card">
+      <button class="editar" (click)="editando = true">Editar</button>
+      <button class="remover" (click)="remover.emit(card)">×</button>
+    </div>
+  </div>
+  @if (card.descricao) {
+    <p class="descricao">{{ card.descricao }}</p>
+  }
+</div>
+
+@if (editando) {
+  <app-card-edit-modal [card]="card" (salvar)="salvar($event)" (cancelar)="editando = false" />
+}
+```
+
+`src/app/card-item/card-item.scss` — substitua todo o conteúdo:
+
+```scss
+.card { background: white; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.tag { display: inline-block; font-size: 0.7rem; color: white; border-radius: 4px; padding: 2px 6px; margin-bottom: 4px; }
+.cabecalho { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+.acoes-card { display: flex; gap: 4px; flex-shrink: 0; }
+.acoes-card button { border: none; background: transparent; cursor: pointer; font-size: 0.75rem; color: #666; }
+.descricao { font-size: 0.75rem; font-weight: normal; color: #666; margin: 4px 0 0; }
+```
+
+`src/app/kanban-api.service.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar() {
+    return this.http.get<Card[]>(this.baseUrl);
+  }
+
+  criar(titulo: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  carregar() {
+    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string) {
+    this.api.criar(titulo).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts` — substitua todo o conteúdo (a única mudança em relação à Parte 16 é o método `editar`, ao final, e `CardEdicao` na importação de `./models/card`):
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  editar(edicao: CardEdicao) {
+    this.state.editar(edicao);
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+`src/app/app.html` — substitua todo o conteúdo (a única mudança em relação à Parte 16 é `(editar)="editar($event)"`, acrescentado às três tags `<app-card-item>`):
+
+```html
+<h1>Kanban</h1>
+<app-card-count />
+<div class="board">
+  <div class="column">
+    <h2>A Fazer</h2>
+    <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+         id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of aFazer; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (editar)="editar($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloAFazer placeholder="Nova tarefa" />
+      <button (click)="adicionar(aFazer, novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Em Andamento</h2>
+    <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+         id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of emAndamento; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (editar)="editar($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+      <button (click)="adicionar(emAndamento, novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Concluído</h2>
+    <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+         id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of concluido; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (editar)="editar($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloConcluido placeholder="Nova tarefa" />
+      <button (click)="adicionar(concluido, novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+    </div>
+  </div>
+</div>
+```
+
+### Explicando
+
+- `@Embedded` mapeia um objeto Java (`Etiqueta`, anotado com `@Embeddable`) diretamente nas colunas da própria tabela `card`, em vez de uma tabela separada — diferente de `@ElementCollection` (Parte 14), que sempre gera uma tabela auxiliar por exigir uma **coleção**. Como agora um card tem no máximo **uma** etiqueta, e não uma lista, `@Embedded` é a ferramenta correta: os dois campos de `Etiqueta` (`nome`, `corHex`) viram duas colunas comuns na própria linha do card.
+- `@AttributeOverrides`/`@AttributeOverride` renomeiam as colunas geradas pelo `@Embedded`: sem essa anotação, o Hibernate usaria os nomes dos campos de `Etiqueta` diretamente (`nome`, `cor_hex`) como nomes de coluna, o que aqui é explicitado como `etiqueta_nome` e `etiqueta_cor_hex`, para deixar claro, olhando só a tabela, que essas colunas pertencem à etiqueta do card, e não ao card em si.
+- Como `Etiqueta` deixou de ser um `enum`, ela não precisa mais de `@JsonFormat(shape = JsonFormat.Shape.OBJECT)` (Parte 14): um objeto Java comum, com os getters usuais (`getNome()`, `getCorHex()`), já é serializado pelo Jackson como `{"nome":"...","corHex":"..."}` por padrão, sem nenhuma anotação especial. A necessidade daquela anotação era uma particularidade de serializar um `enum` como objeto, não algo que qualquer objeto de domínio exige.
+- Um card sem etiqueta agora é representado por `etiqueta: null` no JSON (em vez de `etiquetas: []`, uma lista vazia). O frontend reflete essa mudança: `Card.etiqueta` é tipado como `Etiqueta | null`, e o template usa `@if (card.etiqueta)` em vez de um `@for` sobre uma lista.
+- O modal (`CardEditModalComponent`) segue o mesmo padrão arquitetural já usado em `CardCountComponent`: um componente standalone com seus próprios `imports`, sem acesso a nenhum serviço HTTP diretamente. Ele recebe o `card` atual via `@Input`, mantém os valores em edição como campos simples do componente (inicializados em `ngOnInit`, quando o `@Input` já está disponível) e devolve o resultado por um `@Output` (`salvar`) — a mesma simetria de `remover`, desde a Parte 7: o componente filho não decide o que fazer com a mudança, apenas relata a intenção para quem o envolve.
+- Os campos do formulário usam variáveis de referência de template (`#tituloRef`, `#etiquetaNomeRef` etc.) e `.value`, o mesmo padrão já usado no campo "Nova tarefa" desde a Parte 7, em vez de `[(ngModel)]` — o que evita introduzir `FormsModule`, uma dependência nova, para um formulário deste tamanho.
+- `cdkDrag`, do Angular CDK já usado para o arrastar-e-soltar dos cards (Parte 6), funciona sobre qualquer elemento, não só sobre itens de uma lista: aplicado à `<div class="modal">`, ele a torna livremente arrastável pela tela, sem nenhuma configuração adicional. `cdkDragHandle`, aplicado só ao cabeçalho do modal, restringe onde o arrastar pode começar — sem ele, clicar em qualquer parte do modal (inclusive um campo de texto) iniciaria o arraste, atrapalhando a edição.
+- O redimensionamento não usa Angular CDK nem nenhuma biblioteca: a propriedade CSS `resize: both`, combinada com `overflow: auto`, é um recurso nativo do navegador que desenha uma alça no canto inferior direito do elemento. É suficiente para o pedido ("poder ser redimensionado"), sem exigir código JavaScript de arraste de borda escrito à mão.
+- A remoção de `EtiquetaEnum` deixa a tabela `card_etiquetas` (criada pela `@ElementCollection` da Parte 14) órfã, no mesmo padrão já visto na Parte 14 para a coluna `etiqueta` (singular) da Parte 7: `spring.jpa.hibernate.ddl-auto=update` não a remove sozinho. Diferente daquele caso, esta tabela não precisa ser recriada (nada a persiste mais), mas pode ser removida manualmente, se desejado, com `DROP TABLE card_etiquetas;`.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@Embeddable`** | Anotação JPA que marca uma classe como um objeto de valor, sem identidade própria, cujos campos são mapeados como colunas da entidade que o contém. |
+| **`@Embedded`** | Anotação JPA aplicada ao campo, na entidade dona, que é do tipo de uma classe `@Embeddable`. |
+| **`@AttributeOverride(s)`** | Anotação(ões) JPA que renomeiam a(s) coluna(s) geradas por um campo `@Embedded`, evitando os nomes padrão (iguais aos campos da classe `@Embeddable`). |
+| **Variável de referência de template** (`#nome`) | Sintaxe do Angular que dá um nome, dentro do próprio template HTML, a um elemento do DOM ou a uma diretiva, permitindo acessar suas propriedades (como `.value`) diretamente em outra expressão do mesmo template. |
+| **`cdkDrag`** | Diretiva do Angular CDK que torna um elemento arrastável livremente pela tela, por meio de um `transform` CSS aplicado via JavaScript. |
+| **`cdkDragHandle`** | Diretiva do Angular CDK que restringe, a um elemento específico dentro de um `cdkDrag`, a área que efetivamente inicia o arraste. |
+| **`resize: both`** (CSS) | Propriedade nativa do CSS que adiciona uma alça de redimensionamento livre (largura e altura) a um elemento, sem necessidade de JavaScript. |
+
+### 🧪 Teste rápido
+
+Clique em "Editar" em um card qualquer; o modal deve aparecer centralizado na tela, com os campos preenchidos com os dados atuais do card (título, etiqueta e descrição, se houver). Altere o título, digite um nome de etiqueta e uma cor em hexadecimal (por exemplo, `#e53935`), e escreva uma descrição; clique em "Salvar". O modal deve fechar e o card deve refletir todas as mudanças, com a etiqueta na cor digitada e a descrição em fonte menor, sem negrito, abaixo do título. Reabra o modal em outro card, altere algo e clique em "Cancelar": o card não deve mudar. Ainda com o modal aberto, arraste-o pelo cabeçalho para outro ponto da tela, e redimensione-o pela alça no canto inferior direito, confirmando que ambos os comportamentos funcionam antes de salvar ou cancelar.
+
+---
+
 ## Encerrando o projeto: por que paramos aqui
 
-Com a Parte 15, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards, etiquetas coloridas, arrastar-e-soltar, persistência real em banco, e frontend e backend cada um com seu domínio isolado. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
+Com a Parte 17, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards editáveis (título, descrição e etiqueta livre), arrastar-e-soltar, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A própria Parte 17, além disso, é um exemplo do método reagindo a uma mudança de requisito: o catálogo fixo de etiquetas da Parte 14 não foi remendado para caber uma cor livre — foi substituído, quando a necessidade real deixou de caber no desenho anterior. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
 
 ### Tentações que ficaram de fora, e por quê
 
@@ -2724,8 +3475,9 @@ Nenhuma dessas decisões é definitiva. Como no Sudoku, se uma necessidade real 
 
 ### Estado final do projeto
 
-- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board), `CardItemComponent` (renderiza um card), `KanbanApiService` (fala HTTP com o backend), `KanbanStateService` (mantém e notifica o estado compartilhado via `BehaviorSubject`), `CardCountComponent` (exemplo ilustrativo de consumo do estado compartilhado).
-- **Backend Spring Boot**: `CardController` (rotas HTTP), `KanbanService` (regras de negócio), `CardRepository` (persistência via Spring Data JPA), `Card`/`ColunaEnum`/`EtiquetaEnum`/`ColunaRequest` (domínio e contratos de API).
+- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board, consumindo `KanbanStateService` desde a Parte 16), `CardItemComponent` (renderiza um card e abre o modal de edição), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `KanbanApiService` (fala HTTP com o backend, usado apenas por `KanbanStateService`), `KanbanStateService` (mantém e notifica o estado compartilhado via `BehaviorSubject`), `CardCountComponent` (segundo consumidor real do estado compartilhado, ao lado do próprio `App`).
+- **Backend Spring Boot**: `CardController` (rotas HTTP), `KanbanService` (regras de negócio), `CardRepository` (persistência via Spring Data JPA), `Card`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest` (domínio e contratos de API).
+- **Edição completa de um card** (título, descrição e etiqueta livre, com nome e cor digitados pelo usuário) por um modal arrastável e redimensionável, sem excluir e recriar o card.
 - **Persistência real** em MySQL, rodando em um container Docker (`docker-compose.yml`), com os dados guardados em um volume Docker, sobrevivendo a reinícios do backend, do container e do próprio banco.
 - **Arrastar-e-soltar** funcional entre as três colunas fixas, com a coluna persistida (a posição relativa dentro da coluna não é).
 - **Sem autenticação, sem múltiplos boards, sem tempo real entre abas**, por decisão consciente registrada acima, não por limitação técnica.

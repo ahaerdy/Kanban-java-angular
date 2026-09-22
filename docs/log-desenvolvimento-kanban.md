@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada).
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`).
 
 ---
 
@@ -43,6 +43,8 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 12: Persistência em MySQL via Docker Compose](#parte-12-persistência-em-mysql-via-docker-compose)
 - [Parte 13: Campo `coluna` como `enum` no Backend](#parte-13-campo-coluna-como-enum-no-backend)
 - [Parte 14: Etiquetas como Coleção de `Enum` com Cor](#parte-14-etiquetas-como-coleção-de-enum-com-cor)
+- [Parte 15: `KanbanStateService` e um Segundo Consumidor do Estado](#parte-15-kanbanstateservice-e-um-segundo-consumidor-do-estado)
+- [Parte 16: Migração de `App` para o `KanbanStateService`](#parte-16-migração-de-app-para-o-kanbanstateservice)
 
 ---
 
@@ -2437,12 +2439,221 @@ export class App implements OnInit {
 
 Após a correção das três causas identificadas — remoção da coluna obsoleta como origem do dado a ser buscado, adição de `getName()` a `EtiquetaEnum` e de `@Enumerated(EnumType.STRING)` ao campo `etiquetas`, com a consequente recriação da tabela `card_etiquetas` —, uma etiqueta inserida manualmente na tabela correta passou a ser exibida no frontend com a cor e o texto formatado esperados, conforme validado por meio de captura de tela. O fluxo normal do frontend (listagem, criação, movimentação entre colunas e exclusão de cards) permaneceu funcional durante todo o processo, inclusive antes da correção, confirmando que o problema estava isolado à exibição de etiquetas.
 
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
 <p align="center">
-  <img src="000-Midia_e_Anexos/2026-09-21-19-29-27.png" alt="" width="1024">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
 </p>
+-->
+
+---
+
+## Parte 15: `KanbanStateService` e um Segundo Consumidor do Estado
+
+### Objetivo
+
+Introduzir um serviço central (`KanbanStateService`) que mantém o estado dos cards e notifica automaticamente qualquer consumidor interessado, resolvendo o cenário em que um segundo componente (por exemplo, um contador) precisa saber quando `App` move, cria ou exclui um card, sem comunicação direta entre os dois. Validar esse mecanismo com um componente ilustrativo, `CardCountComponent`, que exibe o total de cards.
+
+### Implementação Realizada
+
+- Criação de `KanbanStateService`, no diretório `src/app`, encapsulando `KanbanApiService` por trás de um `BehaviorSubject<Card[]>` exposto como `cards$`, com os métodos `carregar`, `mover`, `criar` e `excluir`.
+- Criação de `CardCountComponent`, em `src/app/card-count`, inscrito diretamente em `KanbanStateService.cards$` e exibindo o total de cards via `AsyncPipe`.
+- Adição da tag `<app-card-count />` a `app.html`, logo abaixo de `<h1>Kanban</h1>`.
+- Adição de `CardCountComponent` ao array `imports` do `@Component` de `App`, em `app.ts` — única alteração nesse arquivo nesta etapa. `App` continuou consumindo `KanbanApiService` diretamente, como manteve desde a Parte 11; a migração de `App` para `KanbanStateService` foi identificada como possível, mas deliberadamente não realizada nesta parte.
+
+### Código
+
+`src/app/kanban-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  carregar() {
+    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string) {
+    this.api.criar(titulo).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/card-count/card-count.ts`:
+
+```typescript
+import { Component, inject } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { KanbanStateService } from '../kanban-state.service';
+
+@Component({
+  imports: [AsyncPipe],
+  selector: 'app-card-count',
+  templateUrl: './card-count.html',
+})
+export class CardCountComponent {
+  private state = inject(KanbanStateService);
+  cards$ = this.state.cards$;
+}
+```
+
+`src/app/card-count/card-count.html`:
+
+```html
+<p>{{ (cards$ | async)?.length ?? 0 }} cards no total</p>
+```
+
+`src/app/app.ts` — único trecho alterado em relação à Parte 14, no array `imports` do `@Component`:
+
+```typescript
+import { CardCountComponent } from './card-count/card-count';
+// ...
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent],
+  // ...
+})
+```
+
+### Descrição Técnica
+
+- `BehaviorSubject<Card[]>` é um `Observable` do RxJS que guarda o valor mais recente e o entrega imediatamente a qualquer novo inscrito, além de notificar todos os inscritos existentes a cada `.next(...)`. É o mesmo papel de um ponto central de notificação, agora resolvido por uma biblioteca em vez de uma implementação manual do padrão Observer.
+- `.asObservable()` expõe `cards$` como somente leitura para quem consome o serviço; apenas o próprio `KanbanStateService` pode chamar `.next(...)`, por meio dos métodos `carregar`, `mover`, `criar` e `excluir`.
+- `AsyncPipe` (`| async`), usado no template de `CardCountComponent`, inscreve-se automaticamente em um `Observable` e libera a inscrição quando o componente é destruído, chamando `markForCheck()` internamente a cada emissão — por isso `CardCountComponent` não precisa de nenhuma injeção manual de `ChangeDetectorRef`.
+- `CardCountComponent` não depende de `App` para saber quantos cards existem: ele injeta `KanbanStateService` diretamente. Isso, porém, também significa que ele só é notificado de mudanças que passem pelo próprio `KanbanStateService` — uma distinção que se mostrou relevante no teste desta parte.
+- Como `App` continuou chamando `KanbanApiService` diretamente nesta etapa, nenhuma ação realizada pela interface (criar, mover ou excluir um card) passa por `KanbanStateService`. O `BehaviorSubject` desse serviço, portanto, nunca recebe um `.next(...)` a partir das ações do usuário.
+
+### Resultado
+
+`CardCountComponent` foi adicionado e exibido corretamente na interface, sem erro de compilação. Ao testar, porém, o contador permaneceu fixo em `0 cards no total`, mesmo com cards visíveis nas três colunas. A investigação (registrada com mais detalhe na Parte 16, a seguir) confirmou que esse comportamento era esperado, e não uma falha de implementação: nada, em nenhum ponto do código desta etapa, chama `KanbanStateService.carregar()`, `mover()`, `criar()` ou `excluir()` — `App` seguia gerenciando seus três arrays por conta própria, via `KanbanApiService`, exatamente a fronteira que esta parte documentava como deliberadamente não cruzada. A resolução desse sintoma é o objeto da Parte 16.
 
 <p align="center">
-  <img src="000-Midia_e_Anexos/2026-09-21-19-29-44.png" alt="" width="1024">
+  <img src="000-Midia_e_Anexos/2026-09-21-23-52-29.png" alt="" width="1024">
+</p>
+
+---
+
+## Parte 16: Migração de `App` para o `KanbanStateService`
+
+### Objetivo
+
+Eliminar a causa do contador de cards permanecer em `0`, identificada ao final da Parte 15, migrando `App` para consumir `KanbanStateService` no lugar de `KanbanApiService` diretamente — a fronteira que aquela parte havia deixado, por decisão consciente, do outro lado.
+
+### Limitação Identificada
+
+Com `CardCountComponent` já exibido na interface (Parte 15), o valor mostrado permanecia `0 cards no total` mesmo após a criação de cards pela interface. A inspeção do componente `App` pelo console do navegador (`ng.getComponent(document.querySelector('app-root'))`) confirmou o diagnóstico: o objeto retornado trazia `aFazer`, `emAndamento` e `concluido` já povoados (refletindo os cards existentes), mas nenhuma referência a `KanbanStateService` — apenas a `_KanbanApiService`, injetada desde a Parte 9. Como `KanbanStateService.cards$` é um `BehaviorSubject` que só emite um novo valor quando algum dos seus próprios métodos (`carregar`, `mover`, `criar`, `excluir`) é chamado, e nada em `App` chamava qualquer um deles, o `Observable` permanecia parado no valor inicial (`[]`) para sempre — daí o `0` exibido por `CardCountComponent`, mesmo com cards reais existindo nos arrays internos de `App`.
+
+### Implementação Realizada
+
+- Substituição, em `App`, de `inject(KanbanApiService)` por `inject(KanbanStateService)`.
+- Alteração de `ngOnInit`: a assinatura, antes feita em `this.api.listar()`, passou a ser feita em `this.state.cards$`, mantendo a mesma lógica de distribuir a lista recebida nos três arrays (`aFazer`, `emAndamento`, `concluido`) exigidos pelo `cdkDropListData` do Angular CDK. Uma chamada a `this.state.carregar()` foi adicionada logo em seguida, para disparar a primeira emissão do `BehaviorSubject`.
+- Alteração de `drop`, `adicionar` e `remover`: as chamadas a `KanbanApiService.mover`, `.criar` e `.excluir` foram substituídas pelos métodos equivalentes de `KanbanStateService`. Como esses métodos já chamam `carregar()` internamente ao final (Parte 15), a atualização otimista manual dos arrays, existente desde a Parte 11 (`coluna.push(novo)` em `adicionar`; `coluna.splice(...)` em `remover`), foi removida: a lista atualizada chega pela própria assinatura em `cards$`.
+- Nenhuma alteração em `app.html`, `card-count.ts`, `card-count.html` ou `kanban-state.service.ts`.
+
+### Código
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+### Descrição Técnica
+
+- A troca central é `inject(KanbanApiService)` por `inject(KanbanStateService)`: `App` deixa de ser um consumidor direto da API HTTP e passa a ser só mais um consumidor do estado compartilhado, no mesmo nível que `CardCountComponent`, e não mais uma fonte paralela de verdade sobre os cards.
+- A chamada a `this.state.carregar()`, em `ngOnInit`, é o que efetivamente popula `cards$`: como o `BehaviorSubject` nasce com `[]`, alguém precisa chamar `carregar()` ao menos uma vez para que a lista real chegue a qualquer inscrito. Antes desta parte, esse "alguém" não existia; agora é o próprio `App`, na sua inicialização.
+- A remoção da atualização otimista manual (`coluna.push(novo)`, `coluna.splice(...)`) não é uma perda de funcionalidade: como `KanbanStateService.criar`/`mover`/`excluir` já chamam `carregar()` internamente, a nova lista completa chega de qualquer forma pela assinatura em `cards$`, tornando redundante qualquer atualização manual dos mesmos arrays.
+- Um efeito colateral observável, embora imperceptível em `localhost`: mover um card entre colunas passou a depender da resposta da chamada ao backend para a interface se atualizar (antes, a interface mudava imediatamente e a chamada à API ocorria à parte). A reordenação de cards dentro da mesma coluna, que nunca gerou chamada à API desde a Parte 11, continua imediata, pois `moveItemInArray` é aplicado diretamente sobre o array antes de qualquer envolvimento do serviço.
+- `CardCountComponent` não precisou de nenhuma alteração: ele sempre dependeu apenas de `cards$`. A diferença introduzida por esta parte é que agora existe, de fato, alguém alimentando esse `Observable` com dados reais.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`ng.getComponent(elemento)`** | Utilitário exposto pelo Angular em modo de desenvolvimento (via DevTools do navegador) que retorna a instância do componente associada a um elemento do DOM, útil para inspecionar seu estado interno em tempo de execução. |
+| **Fonte única de verdade** (*single source of truth*) | Princípio de design segundo o qual um dado deve ter exatamente um ponto de origem autoritativo; múltiplas cópias sincronizadas manualmente (como `App` e `KanbanStateService` mantendo estado em paralelo) tendem a divergir. |
+
+### Resultado
+
+Após a migração, o frontend foi recarregado e o contador passou a exibir o total correto de cards já na carga inicial da página, sem qualquer comando manual no console. A criação de um novo card ("Teste 02") elevou o contador de `3` para `4`, conforme confirmado por captura de tela, validando que `CardCountComponent` responde corretamente a uma ação disparada por `App`, através do canal comum (`KanbanStateService.cards$`). O fluxo de arrastar-e-soltar entre colunas e a exclusão de cards permaneceram funcionais, sem regressão observada.
+
+<p align="center">
+  <img src="000-Midia_e_Anexos/2026-09-21-23-52-55.png" alt="" width="1024">
 </p>
 
 ---
