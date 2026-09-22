@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`).
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14.
 
 ---
 
@@ -45,6 +45,7 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 14: Etiquetas como Coleção de `Enum` com Cor](#parte-14-etiquetas-como-coleção-de-enum-com-cor)
 - [Parte 15: `KanbanStateService` e um Segundo Consumidor do Estado](#parte-15-kanbanstateservice-e-um-segundo-consumidor-do-estado)
 - [Parte 16: Migração de `App` para o `KanbanStateService`](#parte-16-migração-de-app-para-o-kanbanstateservice)
+- [Parte 17: Edição Completa de Card por Modal Arrastável](#parte-17-edição-completa-de-card-por-modal-arrastável)
 
 ---
 
@@ -274,6 +275,10 @@ Exibição correta dos quatro cards de exemplo, cada um posicionado na coluna co
   <img src="000-Midia_e_Anexos/2026-09-19-10-15-13.png" alt="" width="1024">
 </p>
 
+<p align="center">
+  <img src="000-Midia_e_Anexos/2026-09-22-16-12-10.png" alt="" width="1024">
+</p>
+
 ---
 
 ## Parte 3: Array de Cards e Uso do Bloco `@for`
@@ -372,9 +377,11 @@ O tratamento dessas limitações é previsto para a etapa seguinte, com a introd
 | **`@for` / `track`** | Bloco de controle de fluxo do Angular utilizado para repetir marcação para cada item de uma coleção. A cláusula `track` define o critério de identidade de cada item entre renderizações. |
 | **Objeto literal** | Valor no formato `{ campo: valor, ... }`, criado sem um tipo nomeado (classe ou interface) associado. |
 
+### 🟩 [Entendendo a Parte 03](./aprofundamentos/entendendo_a_parte_03.md)
+
 ### Resultado
 
-Exibição idêntica à obtida na Parte 2, com os quatro cards de exemplo posicionados corretamente em suas respectivas colunas, agora originados de uma estrutura de dados em vez de marcação HTML fixa.
+Exibição idêntica à obtida na Parte 2, com os quatro cards de exemplo posicionados corretamente em suas respectivas colunas, agora originados de uma estrutura de dados em vez de marcação HTML fixa. Verifique 
 
 <p align="center">
   <img src="000-Midia_e_Anexos/2026-09-19-10-35-03.png" alt="" width="1024">
@@ -480,6 +487,8 @@ export class App {
 | **`interface`** (TypeScript) | Contrato que descreve o formato de um objeto (quais campos existem e de que tipo), sem gerar código em tempo de execução. |
 | **Tipo de união de literais de string** | Tipo formado pela união de valores de string específicos, restringindo uma variável a um conjunto fechado de valores possíveis. |
 | **`Array.prototype.filter`** | Método nativo do JavaScript que retorna um novo array contendo apenas os elementos que satisfazem uma condição informada. |
+
+### 🟩 [Entendendo a Parte 04](./aprofundamentos/entendendo_a_parte_04.md)
 
 ### Resultado
 
@@ -617,6 +626,8 @@ export class App {
 | **`@Input()`** | Decorator que declara uma propriedade de um componente como recebível de seu componente pai, por meio de vinculação de dados. |
 | **`required: true`** (em `@Input`) | Opção que torna obrigatória a passagem do valor correspondente; sua ausência é reportada pelo compilador. |
 | **Componente filho / componente pai** | Relação entre um componente utilizado dentro de outro, com recebimento de dados por meio de `@Input`. |
+
+### 🟩 [Entendendo a Parte 05](./aprofundamentos/entendendo_a_parte_05.md)
 
 ### Resultado
 

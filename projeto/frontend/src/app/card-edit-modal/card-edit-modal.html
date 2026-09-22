@@ -1,6 +1,6 @@
 <div class="backdrop">
-  <div class="modal" cdkDrag>
-    <div class="cabecalho-modal" cdkDragHandle>Editar Card</div>
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Editar Card</div>
 
     <label>Título</label>
     <input #tituloRef [value]="titulo" />
