@@ -3467,13 +3467,15 @@ Ao testar a Parte 17, dois dos três comportamentos prometidos para o modal falh
 
 ### O diagnóstico
 
-Os dois sintomas têm uma origem comum: `cdkDrag`, aplicado ao `<div class="modal">` na Parte 17.
+O sintoma se manteve idêntico depois de duas tentativas de correção, cada uma mirando um mecanismo específico do Angular CDK. Vale registrar as três, porque cada uma eliminou uma hipótese real, mesmo sem resolver o problema por completo.
 
-Primeiro, o "modal fantasma" ao arrastar pelo cabeçalho não é, na raiz, um defeito de implementação — é o próprio comportamento documentado do `cdkDrag`: por padrão, o Angular CDK cria um elemento de **preview**, um clone visual que acompanha o cursor durante o arraste, enquanto o elemento original permanece parado em sua posição até o botão ser solto, quando o preview é removido. Sem nenhum CSS adicional para ocultar o original durante o arraste — algo que a Parte 17 não fez —, os dois ficam visíveis ao mesmo tempo, dando exatamente a impressão de um "segundo modal" se movendo por cima do primeiro.
+**Primeira causa, endereçada e confirmada: `cdkDrag` aplicado ao próprio modal.** Por padrão, o Angular CDK cria um elemento de **preview** ao iniciar qualquer arraste: um clone visual que acompanha o cursor, enquanto o elemento original permanece parado até o botão ser solto. Sem CSS para ocultar o original durante o arraste — algo que a Parte 17 não fez —, os dois ficam visíveis ao mesmo tempo. Pior: `cdkDrag`, no mesmo elemento que usa `resize: both`, disputava com o redimensionamento nativo os mesmos eventos de mouse no canto inferior direito. A correção removeu `cdkDrag`/`cdkDragHandle` do modal, substituindo-os por um controlador de arraste escrito à mão — essa parte está correta e permanece.
 
-Segundo, e mais grave: `cdkDrag`, aplicado ao mesmo elemento que também usa a propriedade CSS `resize: both` (o redimensionamento nativo do navegador), faz os dois mecanismos disputarem os mesmos eventos de mouse na área do canto inferior direito. O resultado observado é o mesmo "fantasma" do primeiro caso, mas o redimensionamento nativo nunca chega a acontecer: o `cdkDrag` captura o gesto antes.
+**Segunda causa, também endereçada, mas insuficiente sozinha: propagação de evento até o `cdkDrag` do card.** `<app-card-edit-modal>` é renderizado dentro do template de `CardItemComponent`, e `<app-card-item>` tem `cdkDrag` aplicado ao seu elemento hospedeiro desde a Parte 6. `.backdrop` do modal usa `position: fixed`, o que o faz *aparecer* em outro lugar da tela, mas não o remove da árvore do DOM: ele continua sendo descendente de `<app-card-item>`. Um `mousedown` no modal, mesmo tratado por `iniciarArraste`, continua se propagando (*bubbling*) para cima, podendo alcançar o `cdkDrag` do card. A correção adicionou `evento.stopPropagation()` para bloquear essa propagação — mas o teste mostrou que o problema persistiu de forma idêntica.
 
-A correção remove `cdkDrag`/`cdkDragHandle` do modal por completo, substituindo-os por um pequeno controlador de arraste escrito à mão, com eventos de mouse nativos. Sem nenhuma biblioteca de arraste envolvida, não há como surgir um clone, e não há mais nada disputando eventos com o redimensionamento nativo.
+**Terceira causa, a definitiva: o problema não estava só no tratamento do evento, mas em o modal existir, estruturalmente, dentro da árvore do card.** `stopPropagation()` interrompe a propagação de um evento específico, mas não muda o fato de que, na árvore do DOM (independentemente de onde `position: fixed` faz o elemento aparecer visualmente na tela), o modal é filho do card. Elementos com `position: fixed` são posicionados em relação à janela do navegador **apenas quando nenhum ancestral tem certas propriedades CSS** (como `transform`) que criam um novo contexto de posicionamento — e um elemento sob a influência de `cdkDrag` é exatamente o tipo de ancestral capaz de introduzir esse contexto. Não foi possível confirmar com certeza absoluta, sem um navegador real disponível neste ambiente, qual efeito exato de `cdkDrag` sobre `<app-card-item>` persistia mesmo depois das duas correções anteriores — mas o padrão dos sintomas (um "fantasma" do card, um "fantasma" do modal, e um deslocamento consistente com a posição do card na coluna) aponta consistentemente para essa relação de ancestralidade como a raiz do problema, não para um evento isolado.
+
+A correção definitiva não tenta mais prever ou neutralizar essa interação por dentro: ela remove a própria possibilidade de o modal ser descendente de qualquer elemento com `cdkDrag`. O modal deixa de ser renderizado dentro de `CardItemComponent` e passa a ser renderizado por `App`, como um irmão do quadro (`.board`) — nunca dentro de nenhum card.
 
 ### Arquivos alterados
 
@@ -3527,6 +3529,7 @@ export class CardEditModalComponent implements OnInit {
     this.offsetX = evento.clientX - retangulo.left;
     this.offsetY = evento.clientY - retangulo.top;
     evento.preventDefault();
+    evento.stopPropagation();
   }
 
   @HostListener('document:mousemove', ['$event'])
@@ -3560,7 +3563,7 @@ export class CardEditModalComponent implements OnInit {
 `src/app/card-edit-modal/card-edit-modal.html` — substitua todo o conteúdo:
 
 ```html
-<div class="backdrop">
+<div class="backdrop" (mousedown)="$event.stopPropagation()">
   <div class="modal" #modalRef>
     <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Editar Card</div>
 
@@ -3586,14 +3589,194 @@ export class CardEditModalComponent implements OnInit {
 
 `src/app/card-edit-modal/card-edit-modal.scss` — sem alterações em relação à Parte 17.
 
-Nenhum outro arquivo do projeto é tocado nesta parte — em particular, o `cdkDrag` que arrasta cards entre colunas do board (Parte 6) continua exatamente como estava, em `app.html`; o problema desta parte era específico do modal, não da biblioteca em si.
+`src/app/card-item/card-item.ts` — substitua todo o conteúdo (o modal e o estado `editando` saem daqui; em seu lugar, um novo `@Output` só avisa que o usuário quer editar):
+
+```typescript
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Card } from '../models/card';
+
+@Component({
+  imports: [],
+  selector: 'app-card-item',
+  styleUrl: './card-item.scss',
+  templateUrl: './card-item.html',
+})
+export class CardItemComponent {
+  @Input({ required: true }) card!: Card;
+  @Output() remover = new EventEmitter<Card>();
+  @Output() abrirEdicao = new EventEmitter<Card>();
+}
+```
+
+`src/app/card-item/card-item.html` — substitua todo o conteúdo:
+
+```html
+<div class="card">
+  @if (card.etiqueta) {
+    <span class="tag" [style.background]="card.etiqueta.corHex">{{ card.etiqueta.nome }}</span>
+  }
+  <div class="cabecalho">
+    <strong>{{ card.titulo }}</strong>
+    <div class="acoes-card">
+      <button class="editar" (click)="abrirEdicao.emit(card)">Editar</button>
+      <button class="remover" (click)="remover.emit(card)">×</button>
+    </div>
+  </div>
+  @if (card.descricao) {
+    <p class="descricao">{{ card.descricao }}</p>
+  }
+</div>
+```
+
+`src/app/card-item/card-item.scss` — sem alterações em relação à Parte 17.
+
+`src/app/app.ts` — substitua todo o conteúdo (o modal passa a ser hospedado aqui, controlado por um novo campo `cardEmEdicao`):
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+`src/app/app.html` — substitua todo o conteúdo (cada `<app-card-item>` troca `(editar)` por `(abrirEdicao)`, e o modal passa a ser renderizado uma única vez, fora de `.board`, como irmão dele):
+
+```html
+<h1>Kanban</h1>
+<app-card-count />
+<div class="board">
+  <div class="column">
+    <h2>A Fazer</h2>
+    <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+         id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of aFazer; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloAFazer placeholder="Nova tarefa" />
+      <button (click)="adicionar(aFazer, novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Em Andamento</h2>
+    <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+         id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of emAndamento; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+      <button (click)="adicionar(emAndamento, novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Concluído</h2>
+    <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+         id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of concluido; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloConcluido placeholder="Nova tarefa" />
+      <button (click)="adicionar(concluido, novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+    </div>
+  </div>
+</div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}
+```
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `kanban-api.service.ts` e `kanban-state.service.ts` já tinham o método `editar` desde a Parte 17 e não mudam; o `cdkDrag` que arrasta cards entre colunas do board (Parte 6) também continua exatamente como estava.
 
 ### Explicando
 
 - `iniciarArraste`, associado a `(mousedown)` no cabeçalho, tira o modal do fluxo centralizado do flexbox: `modal.style.position = 'fixed'` remove-o do posicionamento controlado por `.backdrop { display: flex; align-items: center; justify-content: center; }`, e `top`/`left` são inicializados com a posição atual do modal (via `getBoundingClientRect()`), para que ele não salte de lugar no instante em que o arraste começa. `offsetX`/`offsetY` guardam a distância entre o ponto exato clicado e o canto superior esquerdo do modal, para que o arraste continue a partir de onde o cursor pegou o modal, e não do seu canto.
 - `@HostListener('document:mousemove', ...)` e `@HostListener('document:mouseup')` são decorators do Angular que associam métodos do componente a eventos do `document` inteiro — necessário porque o cursor do usuário pode se mover mais rápido que o modal, saindo momentaneamente da área do próprio elemento; escutar no `document` garante que o arraste continue mesmo que o cursor passe por cima de outro elemento da página.
 - A flag `arrastando` faz `mover` ignorar todo evento de `mousemove` fora de um arraste em andamento — sem ela, o listener, registrado permanentemente no `document`, executaria a cada movimento do mouse na página inteira, o tempo todo.
-- Como nenhum elemento é clonado nesta implementação — o próprio elemento do modal (`this.modalRef.nativeElement`) é o que tem `top`/`left` atualizados diretamente —, não há como surgir um segundo elemento visualmente distinto do primeiro. É essa ausência de clonagem, e não algum tratamento especial do redimensionamento, que também resolve o segundo sintoma: sem `cdkDrag` no elemento, `resize: both` (inalterado desde a Parte 17) volta a ser o único mecanismo escutando eventos de mouse naquela área, e funciona sem concorrência.
+- Como nenhum elemento é clonado nesta implementação — o próprio elemento do modal (`this.modalRef.nativeElement`) é o que tem `top`/`left` atualizados diretamente —, o modal em si não tem como criar um "fantasma" de si mesmo. Isso resolveu o problema do redimensionamento (sem `cdkDrag` no elemento, `resize: both`, inalterado desde a Parte 17, volta a ser o único mecanismo escutando eventos de mouse naquela área), mas não bastou para o arraste: um evento de `mousedown`, mesmo tratado por `iniciarArraste`, continua se propagando (*bubbling*) para cima na árvore do DOM, a menos que algo o interrompa explicitamente.
+- `evento.stopPropagation()`, adicionado ao final de `iniciarArraste`, e `(mousedown)="$event.stopPropagation()"` no `.backdrop`, continuam no código: são uma proteção barata e correta contra propagação de evento, mesmo que, sozinhos, não tenham se mostrado suficientes para eliminar o sintoma por completo.
+- A correção que efetivamente resolveu o problema é estrutural, não de tratamento de evento: `<app-card-edit-modal>` deixou de ser renderizado dentro do template de `CardItemComponent` e passou a ser renderizado por `App`, como um irmão de `.board` em `app.html`. Isso elimina, por construção, qualquer relação de ancestralidade entre o modal e qualquer elemento que tenha `cdkDrag` — não há mais nenhum "descendente escondido" para se preocupar, independentemente de qual mecanismo exato do CDK (propagação de evento, contexto de posicionamento CSS, ou outro) fosse responsável pelo sintoma.
+- Essa mudança exigiu subir o estado "qual card está sendo editado" de `CardItemComponent` para `App`: `CardItemComponent` perdeu o campo `editando` e o `@Output() editar`, ganhando em seu lugar um `@Output() abrirEdicao`, que só avisa a intenção de editar um card específico, sem carregar o resultado da edição. `App` ganhou `cardEmEdicao: Card | null`, atualizado por `abrirEdicao` (abre o modal) e zerado por `salvarEdicao`/`fecharEdicao` (fecha o modal, com ou sem salvar). O modal em si (`CardEditModalComponent`) não muda: continua recebendo um `Card` por `@Input` e devolvendo o resultado por `@Output`, apenas agora vindo de `App`, não de `CardItemComponent`.
+- Como só existe uma instância do modal (renderizada por `App`, e não uma por card), abrir a edição de outro card enquanto uma já está aberta simplesmente troca o valor de `cardEmEdicao` — o `@if (cardEmEdicao)` em `app.html` recria o componente do zero a cada vez que ele passa de `null` para um card (ou de um card para outro), então `ngOnInit` sempre roda de novo com os dados do card correto.
 
 ### Glossário
 
@@ -3601,11 +3784,15 @@ Nenhum outro arquivo do projeto é tocado nesta parte — em particular, o `cdkD
 |---|---|
 | **`@HostListener`** | Decorator do Angular que associa um método do componente a um evento do DOM — aqui, `document:mousemove` e `document:mouseup` — sem precisar registrar e remover o listener manualmente. |
 | **`getBoundingClientRect()`** | Método nativo do DOM que devolve a posição e o tamanho atuais de um elemento na tela, usado aqui para capturar onde o modal está no instante em que o arraste começa. |
-| **Preview** (Angular CDK) | Elemento clonado que o `cdkDrag` cria por padrão ao iniciar um arraste, para servir de representação visual seguindo o cursor; documentado, mas responsável pelo sintoma de "fantasma" observado nesta parte, quando usado sem CSS adicional para ocultar o elemento original durante o arraste. |
+| **Preview** (Angular CDK) | Elemento clonado que o `cdkDrag` cria por padrão ao iniciar um arraste, para servir de representação visual seguindo o cursor; documentado, mas responsável por parte do sintoma de "fantasma" observado nesta parte, quando usado sem CSS adicional para ocultar o elemento original durante o arraste. |
+| **Propagação de evento** (*event bubbling*) | Comportamento padrão do DOM em que um evento disparado em um elemento (aqui, um `mousedown`) continua subindo pela árvore de elementos ancestrais depois de tratado, a menos que algo o interrompa — permitindo que um elemento ouça eventos originados em qualquer um de seus descendentes. |
+| **`stopPropagation()`** | Método do objeto de evento do DOM que interrompe essa propagação, impedindo que o evento alcance elementos ancestrais além do ponto em que foi chamado. |
+| **Elevação de estado** (*lifting state up*) | Padrão em que um dado (aqui, qual card está sendo editado) é movido de um componente filho para um componente ancestral comum, permitindo que uma única instância de outro componente (o modal) seja controlada a partir daquele ponto central, em vez de existir uma cópia por filho. |
+| **Contexto de posicionamento** | Elemento em relação ao qual um descendente com `position: fixed` (ou `absolute`) é posicionado; normalmente a janela do navegador, mas certas propriedades CSS em um ancestral (como `transform`) podem alterar essa referência. |
 
 ### 🧪 Teste rápido
 
-Abra o modal de edição de um card, clique e arraste pelo cabeçalho: um único modal deve se mover, sem nenhuma duplicata visível, seguindo o cursor até o botão ser solto. Solte o botão do mouse e confirme que o modal permanece exatamente onde foi largado. Em seguida, posicione o cursor sobre o canto inferior direito do modal (o cursor deve virar uma seta dupla) e arraste: o modal deve crescer ou encolher normalmente, sem nenhuma duplicata aparecendo. Repita ambos os testes algumas vezes, inclusive alternando entre arrastar e redimensionar no mesmo modal aberto, antes de clicar em "Salvar" ou "Cancelar".
+Abra o modal de edição de um card, clique e arraste pelo cabeçalho: um único modal deve se mover, sem nenhuma duplicata do modal e sem nenhuma duplicata do card por baixo dele, seguindo o cursor até o botão ser solto. Solte o botão do mouse e confirme que o modal permanece exatamente onde foi largado, e que o card original (na coluna) não se moveu nem foi afetado. Em seguida, posicione o cursor sobre o canto inferior direito do modal (o cursor deve virar uma seta dupla) e arraste: o modal deve crescer ou encolher normalmente, sem nenhuma duplicata aparecendo. Repita os testes algumas vezes, inclusive alternando entre arrastar e redimensionar no mesmo modal aberto, antes de clicar em "Salvar" ou "Cancelar". Por fim, abra o modal em um card, cancele, e abra o modal em outro card diferente: confirme que ele aparece com os dados do segundo card, não do primeiro.
 
 ---
 
