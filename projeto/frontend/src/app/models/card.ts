@@ -8,6 +8,7 @@ export interface Card {
   titulo: string;
   descricao: string | null;
   etiqueta: Etiqueta | null;
+  ordem: number;
 }
 
 export interface CardEdicao {

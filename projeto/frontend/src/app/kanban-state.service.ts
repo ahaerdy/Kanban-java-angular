@@ -25,6 +25,10 @@ export class KanbanStateService {
     this.api.editar(edicao).subscribe(() => this.carregar());
   }
 
+  reordenar(ids: string[]) {
+    this.api.reordenar(ids).subscribe(() => this.carregar());
+  }
+
   excluir(id: string) {
     this.api.excluir(id).subscribe(() => this.carregar());
   }

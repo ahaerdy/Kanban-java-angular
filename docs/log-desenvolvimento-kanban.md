@@ -635,7 +635,7 @@ export class App {
 Comportamento visual idêntico ao obtido na etapa anterior. A alteração do estilo de um card, realizada exclusivamente em `card-item.scss`, não exigiu qualquer modificação em `app.ts` ou `app.html`, confirmando o isolamento efetivo da responsabilidade.
 
 <p align="center">
-  <img src="000-Midia_e_Anexos/2026-09-19-10-35-58.png" alt="" width="1024">
+  <img src="000-Midia_e_Anexos/2026-09-23-09-06-41.png" alt="" width="1024">
 </p>
 
 ---
@@ -754,6 +754,8 @@ O campo `coluna`, presente em cada objeto `Card`, não é atualizado pela opera�
 | **`cdkDropList`** | Diretiva que marca um elemento como zona válida para o recebimento de itens arrastáveis. |
 | **`cdkDrag`** | Diretiva que torna um elemento arrastável dentro de uma `cdkDropList`. |
 | **`CdkDragDrop<T>`** | Tipo do evento emitido ao soltar um item, contendo os contêineres de origem e destino, além dos índices de posição. |
+
+### 🟩 [Entendendo a Parte 06](./aprofundamentos/entendendo_a_parte_06.md)
 
 ### Resultado
 

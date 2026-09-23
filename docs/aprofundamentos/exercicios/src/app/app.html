@@ -3,30 +3,19 @@
   <div class="column">
     <h2>A Fazer</h2>
     @for (c of porColuna('A_FAZER'); track c) {
-      <div class="card">
-        <span class="tag">{{ c.etiqueta }}</span>
-        <strong>{{ c.titulo }}</strong>
-      </div>
+      <app-card-item [card]="c" />
     }
   </div>
-
   <div class="column">
     <h2>Em Andamento</h2>
     @for (c of porColuna('EM_ANDAMENTO'); track c) {
-      <div class="card">
-        <span class="tag">{{ c.etiqueta }}</span>
-        <strong>{{ c.titulo }}</strong>
-      </div>
+      <app-card-item [card]="c" />
     }
   </div>
-
   <div class="column">
     <h2>Concluído</h2>
     @for (c of porColuna('CONCLUIDO'); track c) {
-      <div class="card">
-        <span class="tag">{{ c.etiqueta }}</span>
-        <strong>{{ c.titulo }}</strong>
-      </div>
+      <app-card-item [card]="c" />
     }
   </div>
 </div>

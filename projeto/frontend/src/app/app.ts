@@ -3,6 +3,7 @@ import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from 
 import { Card, CardEdicao } from './models/card';
 import { CardItemComponent } from './card-item/card-item';
 import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
 import { KanbanStateService } from './kanban-state.service';
 
 interface CardApi extends Card {
@@ -16,7 +17,7 @@ const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = 
 };
 
 @Component({
-  imports: [CardItemComponent, DragDropModule, CardCountComponent],
+  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
   selector: 'app-root',
   styleUrl: './app.scss',
   templateUrl: './app.html',
@@ -28,6 +29,8 @@ export class App implements OnInit {
   aFazer: Card[] = [];
   emAndamento: Card[] = [];
   concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
 
   ngOnInit() {
     this.state.cards$.subscribe(cards => {
@@ -43,6 +46,7 @@ export class App implements OnInit {
   drop(event: CdkDragDrop<Card[]>) {
     if (event.previousContainer === event.container) {
       moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      this.state.reordenar(event.container.data.map(c => c.id));
       return;
     }
     transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
@@ -56,8 +60,17 @@ export class App implements OnInit {
     this.state.criar(titulo);
   }
 
-  editar(edicao: CardEdicao) {
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
     this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
   }
 
   remover(coluna: Card[], card: Card) {

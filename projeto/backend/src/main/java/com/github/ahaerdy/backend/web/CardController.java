@@ -41,6 +41,11 @@ public class CardController {
         service.editar(id, body.titulo(), body.descricao(), etiqueta);
     }
 
+    @PutMapping("/reordenar")
+    public void reordenar(@RequestBody ReordenarRequest body) {
+        service.reordenar(body.ids());
+    }
+
     @DeleteMapping("/{id}")
     public void excluir(@PathVariable String id) {
         service.excluir(id);

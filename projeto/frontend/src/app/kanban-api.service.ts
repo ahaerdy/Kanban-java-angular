@@ -24,6 +24,10 @@ export class KanbanApiService {
     return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
   }
 
+  reordenar(ids: string[]) {
+    return this.http.put<void>(`${this.baseUrl}/reordenar`, { ids });
+  }
+
   excluir(id: string) {
     return this.http.delete<void>(`${this.baseUrl}/${id}`);
   }

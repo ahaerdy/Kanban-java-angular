@@ -4,6 +4,7 @@ import com.github.ahaerdy.backend.model.Card;
 import com.github.ahaerdy.backend.model.ColunaEnum;
 import com.github.ahaerdy.backend.model.Etiqueta;
 import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -19,7 +20,7 @@ public class KanbanService {
     }
 
     public List<Card> listarTodos() {
-        return repository.findAll();
+        return repository.findAll(Sort.by("ordem"));
     }
 
     public Card criar(String titulo) {
@@ -30,6 +31,7 @@ public class KanbanService {
     public void mover(String id, ColunaEnum novaColuna) {
         repository.findById(id).ifPresent(c -> {
             c.setColuna(novaColuna);
+            c.setOrdem(System.currentTimeMillis());
             repository.save(c);
         });
     }
@@ -41,6 +43,17 @@ public class KanbanService {
             c.setEtiqueta(etiqueta);
             repository.save(c);
         });
+    }
+
+    public void reordenar(List<String> ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            long posicao = i;
+            String id = ids.get(i);
+            repository.findById(id).ifPresent(c -> {
+                c.setOrdem(posicao);
+                repository.save(c);
+            });
+        }
     }
 
     public void excluir(String id) {
