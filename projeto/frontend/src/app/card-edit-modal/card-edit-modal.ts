@@ -45,6 +45,7 @@ export class CardEditModalComponent implements OnInit {
     this.offsetX = evento.clientX - retangulo.left;
     this.offsetY = evento.clientY - retangulo.top;
     evento.preventDefault();
+    evento.stopPropagation();
   }
 
   @HostListener('document:mousemove', ['$event'])

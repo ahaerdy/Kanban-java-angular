@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14.
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`.
 
 ---
 
@@ -46,6 +46,7 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 15: `KanbanStateService` e um Segundo Consumidor do Estado](#parte-15-kanbanstateservice-e-um-segundo-consumidor-do-estado)
 - [Parte 16: Migração de `App` para o `KanbanStateService`](#parte-16-migração-de-app-para-o-kanbanstateservice)
 - [Parte 17: Edição Completa de Card por Modal Arrastável](#parte-17-edição-completa-de-card-por-modal-arrastável)
+- [Parte 18: Corrigindo o Arraste e o Redimensionamento do Modal](#parte-18-corrigindo-o-arraste-e-o-redimensionamento-do-modal)
 
 ---
 
@@ -2666,6 +2667,1012 @@ Após a migração, o frontend foi recarregado e o contador passou a exibir o to
 <p align="center">
   <img src="000-Midia_e_Anexos/2026-09-21-23-52-55.png" alt="" width="1024">
 </p>
+
+---
+
+## Parte 17: Edição Completa de Card por Modal Arrastável
+
+### Objetivo
+
+Permitir editar um card já criado — título, uma descrição livre e uma etiqueta (nome e cor, ambos digitados livremente pelo usuário) — através de um modal, sem precisar excluir e recriar o card e sem perder a coluna em que ele está.
+
+### Limitação Identificada
+
+Até esta parte, um card só podia ser criado ou excluído; nenhuma alteração posterior era possível. Além disso, o requisito de cor de etiqueta livre, digitada como código hexadecimal por card, era incompatível com o desenho da Parte 14: `EtiquetaEnum` associa uma cor fixa a cada nome de etiqueta, e essa cor é compartilhada por todos os cards que usam aquele nome. Uma cor livre por card não tem como conviver com uma cor fixa por constante de `enum`.
+
+### Implementação Realizada
+
+- Exclusão de `EtiquetaEnum.java`, substituído por `Etiqueta`, uma classe `@Embeddable` com dois campos livres (`nome`, `corHex`).
+- Alteração de `Card`: o campo `etiquetas` (lista de `EtiquetaEnum`, via `@ElementCollection`) foi substituído por `etiqueta` (um único valor, possivelmente nulo, via `@Embedded`); um novo campo `descricao` foi adicionado.
+- Criação de `EtiquetaRequest` e `CardEditRequest`, no pacote `web`, como corpo do novo endpoint de edição.
+- Novo endpoint `PUT /cards/{id}` em `CardController`, repassando para um novo método `editar` em `KanbanService`.
+- Criação de `CardEditModalComponent`, um componente Angular standalone com campos para título, nome da etiqueta, cor da etiqueta (hex) e descrição, com botões "Salvar" e "Cancelar". O modal usa a diretiva `cdkDrag` (Angular CDK, já em uso desde a Parte 6) para ser arrastável, restrita a um cabeçalho via `cdkDragHandle`, e a propriedade CSS `resize: both` para ser redimensionável, sem nenhuma biblioteca adicional.
+- Alteração de `CardItemComponent`: adição de um botão "Editar", que abre o modal; adição da exibição condicional da etiqueta (agora um único valor, não mais uma lista) e da descrição, em fonte menor e sem negrito, abaixo do título.
+- Alteração de `models/card.ts`: `Card.etiqueta` passou de lista para um único valor opcional (`Etiqueta | null`); `descricao` foi adicionado; nova interface `CardEdicao`, usada como contrato entre `CardItemComponent`, `App` e os dois serviços.
+- Alteração de `KanbanApiService` e `KanbanStateService`: adição do método `editar`, seguindo o mesmo padrão de `mover`, `criar` e `excluir` (a chamada à API é seguida de uma nova chamada a `carregar()`).
+- Alteração de `App` e de `app.html`: adição do método `editar`, que repassa o evento para `KanbanStateService`, e da ligação `(editar)="editar($event)"` nas três tags `<app-card-item>`.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/model/Etiqueta.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.Embeddable;
+
+@Embeddable
+public class Etiqueta {
+
+    private String nome;
+    private String corHex;
+
+    public Etiqueta() {
+    }
+
+    public Etiqueta(String nome, String corHex) {
+        this.nome = nome;
+        this.corHex = corHex;
+    }
+
+    public String getNome() {
+        return nome;
+    }
+
+    public void setNome(String nome) {
+        this.nome = nome;
+    }
+
+    public String getCorHex() {
+        return corHex;
+    }
+
+    public void setCorHex(String corHex) {
+        this.corHex = corHex;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String descricao;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+        @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/EtiquetaRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+public record EtiquetaRequest(String nome, String corHex) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardEditRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+public record CardEditRequest(String titulo, String descricao, EtiquetaRequest etiqueta) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody Card novo) {
+        return service.criar(novo.getTitulo());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll();
+    }
+
+    public Card criar(String titulo) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+`src/app/models/card.ts`:
+
+```typescript
+export interface Etiqueta {
+  nome: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+
+export interface CardEdicao {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+```
+
+`src/app/card-edit-modal/card-edit-modal.ts`:
+
+```typescript
+import { Component, EventEmitter, Input, OnInit, Output } from '@angular/core';
+import { DragDropModule } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from '../models/card';
+
+@Component({
+  imports: [DragDropModule],
+  selector: 'app-card-edit-modal',
+  styleUrl: './card-edit-modal.scss',
+  templateUrl: './card-edit-modal.html',
+})
+export class CardEditModalComponent implements OnInit {
+  @Input({ required: true }) card!: Card;
+  @Output() salvar = new EventEmitter<CardEdicao>();
+  @Output() cancelar = new EventEmitter<void>();
+
+  titulo = '';
+  descricao = '';
+  etiquetaNome = '';
+  etiquetaCor = '';
+
+  ngOnInit() {
+    this.titulo = this.card.titulo;
+    this.descricao = this.card.descricao ?? '';
+    this.etiquetaNome = this.card.etiqueta?.nome ?? '';
+    this.etiquetaCor = this.card.etiqueta?.corHex ?? '';
+  }
+
+  confirmar(titulo: string, etiquetaNome: string, etiquetaCor: string, descricao: string) {
+    const tituloLimpo = titulo.trim();
+    if (!tituloLimpo) return;
+
+    const nome = etiquetaNome.trim();
+    this.salvar.emit({
+      id: this.card.id,
+      titulo: tituloLimpo,
+      descricao: descricao.trim() || null,
+      etiqueta: nome ? { nome, corHex: etiquetaCor.trim() || '#999999' } : null,
+    });
+  }
+}
+```
+
+`src/app/card-edit-modal/card-edit-modal.html`:
+
+```html
+<div class="backdrop">
+  <div class="modal" cdkDrag>
+    <div class="cabecalho-modal" cdkDragHandle>Editar Card</div>
+
+    <label>Título</label>
+    <input #tituloRef [value]="titulo" />
+
+    <label>Etiqueta</label>
+    <input #etiquetaNomeRef [value]="etiquetaNome" placeholder="ex.: Urgente" />
+
+    <label>Cor da etiqueta (hex)</label>
+    <input #etiquetaCorRef [value]="etiquetaCor" placeholder="#e53935" />
+
+    <label>Descrição</label>
+    <textarea #descricaoRef>{{ descricao }}</textarea>
+
+    <div class="acoes">
+      <button (click)="cancelar.emit()">Cancelar</button>
+      <button (click)="confirmar(tituloRef.value, etiquetaNomeRef.value, etiquetaCorRef.value, descricaoRef.value)">Salvar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/card-edit-modal/card-edit-modal.scss`:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; min-width: 260px; min-height: 260px; resize: both; overflow: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; margin-bottom: 0.25rem; }
+.modal label { font-size: 0.8rem; color: #555; margin-top: 0.25rem; }
+.modal input, .modal textarea { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.modal textarea { resize: none; min-height: 3rem; }
+.acoes { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem; }
+.acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes button:last-child { background: #1976d2; color: white; border-color: #1976d2; }
+```
+
+`src/app/card-item/card-item.ts`:
+
+```typescript
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Card, CardEdicao } from '../models/card';
+import { CardEditModalComponent } from '../card-edit-modal/card-edit-modal';
+
+@Component({
+  imports: [CardEditModalComponent],
+  selector: 'app-card-item',
+  styleUrl: './card-item.scss',
+  templateUrl: './card-item.html',
+})
+export class CardItemComponent {
+  @Input({ required: true }) card!: Card;
+  @Output() remover = new EventEmitter<Card>();
+  @Output() editar = new EventEmitter<CardEdicao>();
+
+  editando = false;
+
+  salvar(edicao: CardEdicao) {
+    this.editando = false;
+    this.editar.emit(edicao);
+  }
+}
+```
+
+`src/app/card-item/card-item.html`:
+
+```html
+<div class="card">
+  @if (card.etiqueta) {
+    <span class="tag" [style.background]="card.etiqueta.corHex">{{ card.etiqueta.nome }}</span>
+  }
+  <div class="cabecalho">
+    <strong>{{ card.titulo }}</strong>
+    <div class="acoes-card">
+      <button class="editar" (click)="editando = true">Editar</button>
+      <button class="remover" (click)="remover.emit(card)">×</button>
+    </div>
+  </div>
+  @if (card.descricao) {
+    <p class="descricao">{{ card.descricao }}</p>
+  }
+</div>
+
+@if (editando) {
+  <app-card-edit-modal [card]="card" (salvar)="salvar($event)" (cancelar)="editando = false" />
+}
+```
+
+`src/app/card-item/card-item.scss`:
+
+```scss
+.card { background: white; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.tag { display: inline-block; font-size: 0.7rem; color: white; border-radius: 4px; padding: 2px 6px; margin-bottom: 4px; }
+.cabecalho { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+.acoes-card { display: flex; gap: 4px; flex-shrink: 0; }
+.acoes-card button { border: none; background: transparent; cursor: pointer; font-size: 0.75rem; color: #666; }
+.descricao { font-size: 0.75rem; font-weight: normal; color: #666; margin: 4px 0 0; }
+```
+
+`src/app/kanban-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar() {
+    return this.http.get<Card[]>(this.baseUrl);
+  }
+
+  criar(titulo: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  carregar() {
+    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string) {
+    this.api.criar(titulo).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  editar(edicao: CardEdicao) {
+    this.state.editar(edicao);
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+`src/app/app.html`:
+
+```html
+<h1>Kanban</h1>
+<app-card-count />
+<div class="board">
+  <div class="column">
+    <h2>A Fazer</h2>
+    <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+         id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of aFazer; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (editar)="editar($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloAFazer placeholder="Nova tarefa" />
+      <button (click)="adicionar(aFazer, novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Em Andamento</h2>
+    <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+         id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of emAndamento; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (editar)="editar($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+      <button (click)="adicionar(emAndamento, novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Concluído</h2>
+    <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+         id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of concluido; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (editar)="editar($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloConcluido placeholder="Nova tarefa" />
+      <button (click)="adicionar(concluido, novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+    </div>
+  </div>
+</div>
+```
+
+### Descrição Técnica
+
+- `@Embedded`, ao contrário de `@ElementCollection` (Parte 14), mapeia um objeto Java diretamente como colunas da própria tabela da entidade dona, em vez de uma tabela auxiliar — a escolha correta aqui, já que um card passou a ter no máximo uma etiqueta, não uma coleção delas.
+- `@AttributeOverrides`/`@AttributeOverride` renomeiam as colunas geradas pelo campo `@Embedded`, evitando que o Hibernate use os nomes dos campos de `Etiqueta` (`nome`, `corHex`) diretamente como nomes de coluna; a tabela `card` passa a ter `etiqueta_nome` e `etiqueta_cor_hex`.
+- `Etiqueta`, deixando de ser um `enum`, não precisa mais de `@JsonFormat(shape = JsonFormat.Shape.OBJECT)` (Parte 14): um objeto Java comum, com os getters usuais, já é serializado pelo Jackson como um objeto JSON por padrão.
+- O modal segue a mesma simetria arquitetural já usada em `CardItemComponent`/`App` desde a Parte 7: recebe o card via `@Input`, mantém os valores em edição como campos simples (inicializados em `ngOnInit`), e devolve o resultado por um `@Output` (`salvar`), sem nunca falar diretamente com nenhum serviço HTTP.
+- Os campos do formulário usam variáveis de referência de template (`#tituloRef`, etc.) e `.value`, o mesmo padrão já usado no campo "Nova tarefa" desde a Parte 7, evitando introduzir `FormsModule`/`[(ngModel)]` como dependência nova para um formulário deste tamanho.
+- `cdkDrag`, já usado desde a Parte 6 para o arrastar-e-soltar de cards entre colunas, funciona sobre qualquer elemento — aplicado à `<div class="modal">`, torna-a livremente arrastável. `cdkDragHandle`, restrito ao cabeçalho do modal, evita que clicar em um campo de texto inicie o arraste.
+- O redimensionamento usa apenas `resize: both` (CSS nativo do navegador), sem nenhuma biblioteca ou código de arraste de borda escrito à mão.
+- A remoção de `EtiquetaEnum` deixa a tabela `card_etiquetas` (criada pela `@ElementCollection` da Parte 14) órfã, no mesmo padrão já visto na Parte 14 para a antiga coluna `etiqueta` (singular) da Parte 7: `spring.jpa.hibernate.ddl-auto=update` não remove estrutura sem correspondência na entidade. Diferente daquele caso, esta tabela não precisa ser recriada — apenas removida manualmente, se desejado (`DROP TABLE card_etiquetas;`), já que nada mais a referencia.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@Embeddable`** | Anotação JPA que marca uma classe como um objeto de valor, sem identidade própria, cujos campos são mapeados como colunas da entidade que o contém. |
+| **`@Embedded`** | Anotação JPA aplicada ao campo, na entidade dona, que é do tipo de uma classe `@Embeddable`. |
+| **`@AttributeOverride(s)`** | Anotação(ões) JPA que renomeiam a(s) coluna(s) geradas por um campo `@Embedded`, evitando os nomes padrão (iguais aos campos da classe `@Embeddable`). |
+| **Variável de referência de template** (`#nome`) | Sintaxe do Angular que dá um nome, dentro do próprio template HTML, a um elemento do DOM ou a uma diretiva, permitindo acessar suas propriedades (como `.value`) diretamente em outra expressão do mesmo template. |
+| **`cdkDrag`** | Diretiva do Angular CDK que torna um elemento arrastável livremente pela tela, por meio de um `transform` CSS aplicado via JavaScript. |
+| **`cdkDragHandle`** | Diretiva do Angular CDK que restringe, a um elemento específico dentro de um `cdkDrag`, a área que efetivamente inicia o arraste. |
+| **`resize: both`** (CSS) | Propriedade nativa do CSS que adiciona uma alça de redimensionamento livre (largura e altura) a um elemento, sem necessidade de JavaScript. |
+
+### Resultado
+
+A implementação foi validada com sucesso: o botão "Editar" abre o modal preenchido com os dados atuais do card; alterações em título, etiqueta (nome e cor) e descrição são persistidas ao clicar em "Salvar", refletindo imediatamente no card; "Cancelar" descarta as alterações sem afetar o card. O modal se mostrou arrastável pelo cabeçalho e redimensionável pela alça no canto inferior direito, ambos antes de salvar ou cancelar. Nenhuma regressão foi observada no fluxo já existente (listagem, criação, arrastar-e-soltar entre colunas e exclusão de cards).
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 18: Corrigindo o Arraste e o Redimensionamento do Modal
+
+### Objetivo
+
+Corrigir dois defeitos encontrados ao testar a Parte 17: o modal de edição não se deixava redimensionar, e arrastá-lo pelo cabeçalho fazia surgir cópias fantasmas se movendo pela tela, em vez do próprio modal.
+
+### Limitação Identificada
+
+Ao testar a Parte 17, dois dos três comportamentos prometidos para o modal falharam. Arrastar pelo cabeçalho fazia surgir um segundo modal idêntico, sobreposto ao primeiro, que se movia sozinho e desaparecia ao soltar o botão do mouse, enquanto o modal original ficava parado no lugar. Tentar redimensionar pela alça no canto inferior direito produzia o mesmo sintoma, sem nunca redimensionar de fato.
+
+A investigação avançou em três etapas, cada uma eliminando uma hipótese real sem resolver o problema por completo — vale registrar as três, porque a causa definitiva só ficou clara depois de descartar as duas primeiras:
+
+1. **`cdkDrag` aplicado ao próprio modal.** Por padrão, o Angular CDK cria um elemento de *preview* ao iniciar qualquer arraste — um clone visual que acompanha o cursor, enquanto o elemento original permanece parado até o botão ser solto. Sem CSS para ocultar o original durante o arraste, os dois ficam visíveis ao mesmo tempo. Pior: `cdkDrag`, no mesmo elemento que usa `resize: both`, disputava com o redimensionamento nativo os mesmos eventos de mouse no canto inferior direito. A primeira correção removeu `cdkDrag`/`cdkDragHandle` do modal, substituindo-os por um controlador de arraste escrito à mão (`iniciarArraste`/`mover`/`pararArraste`, com `@HostListener`). Essa parte da correção estava certa, mas o teste seguinte mostrou que o sintoma persistia de forma idêntica.
+2. **Propagação de evento até o `cdkDrag` do card.** `<app-card-edit-modal>` era renderizado dentro do template de `CardItemComponent`, e `<app-card-item>` tem `cdkDrag` aplicado ao seu elemento hospedeiro desde a Parte 6. `.backdrop` do modal usa `position: fixed`, o que o faz aparecer visualmente em outro lugar da tela, mas não o remove da árvore do DOM: ele continuava sendo descendente de `<app-card-item>`. Um `mousedown` no modal, mesmo tratado por `iniciarArraste`, continuava se propagando (*bubbling*) para cima, podendo alcançar o `cdkDrag` do card. A segunda correção adicionou `evento.stopPropagation()` para bloquear essa propagação — mas o teste, de novo, mostrou o problema idêntico.
+3. **A causa definitiva: o modal existir, estruturalmente, dentro da árvore do card.** `stopPropagation()` interrompe a propagação de um evento específico, mas não muda o fato de que, na árvore do DOM, o modal era filho do card, independentemente de onde `position: fixed` o fazia aparecer visualmente. Não foi possível confirmar com certeza absoluta, sem um navegador real disponível durante o desenvolvimento, qual efeito exato de `cdkDrag` sobre `<app-card-item>` persistia mesmo depois das duas correções anteriores — mas o padrão dos sintomas (um "fantasma" do card, um "fantasma" do modal, e um deslocamento consistente com a posição do card na coluna) apontava para essa relação de ancestralidade como a raiz do problema.
+
+### Implementação Realizada
+
+- Mantido o controlador de arraste manual do modal (`iniciarArraste`/`mover`/`pararArraste`, com `@HostListener`), incluindo `stopPropagation()` como proteção adicional — nenhuma das duas primeiras correções foi revertida, ambas continuam corretas, apenas insuficientes sozinhas.
+- Correção estrutural: `<app-card-edit-modal>` deixou de ser renderizado dentro do template de `CardItemComponent` e passou a ser renderizado por `App`, como um irmão de `.board` em `app.html` — nunca mais como descendente de nenhum elemento com `cdkDrag`.
+- `CardItemComponent` perdeu o campo `editando` e o `@Output() editar`; ganhou, em seu lugar, um `@Output() abrirEdicao`, que só avisa a intenção de editar um card específico.
+- `App` ganhou o campo `cardEmEdicao: Card | null`, atualizado pelo novo método `abrirEdicao` (abre o modal) e zerado por `salvarEdicao`/`fecharEdicao` (fecha o modal, com ou sem salvar).
+- `app.html`: cada `<app-card-item>` trocou `(editar)` por `(abrirEdicao)`; o modal passou a ser renderizado uma única vez, fora de `.board`.
+- `kanban-api.service.ts` e `kanban-state.service.ts` não mudam (já tinham o método `editar` desde a Parte 17).
+
+### Código
+
+`src/app/card-edit-modal/card-edit-modal.ts`:
+
+```typescript
+import { Component, ElementRef, EventEmitter, HostListener, Input, OnInit, Output, ViewChild } from '@angular/core';
+import { Card, CardEdicao } from '../models/card';
+
+@Component({
+  imports: [],
+  selector: 'app-card-edit-modal',
+  styleUrl: './card-edit-modal.scss',
+  templateUrl: './card-edit-modal.html',
+})
+export class CardEditModalComponent implements OnInit {
+  @Input({ required: true }) card!: Card;
+  @Output() salvar = new EventEmitter<CardEdicao>();
+  @Output() cancelar = new EventEmitter<void>();
+
+  @ViewChild('modalRef') modalRef!: ElementRef<HTMLDivElement>;
+
+  titulo = '';
+  descricao = '';
+  etiquetaNome = '';
+  etiquetaCor = '';
+
+  private arrastando = false;
+  private offsetX = 0;
+  private offsetY = 0;
+
+  ngOnInit() {
+    this.titulo = this.card.titulo;
+    this.descricao = this.card.descricao ?? '';
+    this.etiquetaNome = this.card.etiqueta?.nome ?? '';
+    this.etiquetaCor = this.card.etiqueta?.corHex ?? '';
+  }
+
+  iniciarArraste(evento: MouseEvent) {
+    const modal = this.modalRef.nativeElement;
+    const retangulo = modal.getBoundingClientRect();
+
+    // Sai do fluxo centralizado do flexbox e passa a se posicionar
+    // por coordenadas fixas de tela, a partir da posição atual.
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    modal.style.top = `${retangulo.top}px`;
+    modal.style.left = `${retangulo.left}px`;
+
+    this.arrastando = true;
+    this.offsetX = evento.clientX - retangulo.left;
+    this.offsetY = evento.clientY - retangulo.top;
+    evento.preventDefault();
+    evento.stopPropagation();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  mover(evento: MouseEvent) {
+    if (!this.arrastando) return;
+    const modal = this.modalRef.nativeElement;
+    modal.style.left = `${evento.clientX - this.offsetX}px`;
+    modal.style.top = `${evento.clientY - this.offsetY}px`;
+  }
+
+  @HostListener('document:mouseup')
+  pararArraste() {
+    this.arrastando = false;
+  }
+
+  confirmar(titulo: string, etiquetaNome: string, etiquetaCor: string, descricao: string) {
+    const tituloLimpo = titulo.trim();
+    if (!tituloLimpo) return;
+
+    const nome = etiquetaNome.trim();
+    this.salvar.emit({
+      id: this.card.id,
+      titulo: tituloLimpo,
+      descricao: descricao.trim() || null,
+      etiqueta: nome ? { nome, corHex: etiquetaCor.trim() || '#999999' } : null,
+    });
+  }
+}
+```
+
+`src/app/card-edit-modal/card-edit-modal.html`:
+
+```html
+<div class="backdrop" (mousedown)="$event.stopPropagation()">
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Editar Card</div>
+
+    <label>Título</label>
+    <input #tituloRef [value]="titulo" />
+
+    <label>Etiqueta</label>
+    <input #etiquetaNomeRef [value]="etiquetaNome" placeholder="ex.: Urgente" />
+
+    <label>Cor da etiqueta (hex)</label>
+    <input #etiquetaCorRef [value]="etiquetaCor" placeholder="#e53935" />
+
+    <label>Descrição</label>
+    <textarea #descricaoRef>{{ descricao }}</textarea>
+
+    <div class="acoes">
+      <button (click)="cancelar.emit()">Cancelar</button>
+      <button (click)="confirmar(tituloRef.value, etiquetaNomeRef.value, etiquetaCorRef.value, descricaoRef.value)">Salvar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/card-item/card-item.ts`:
+
+```typescript
+import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Card } from '../models/card';
+
+@Component({
+  imports: [],
+  selector: 'app-card-item',
+  styleUrl: './card-item.scss',
+  templateUrl: './card-item.html',
+})
+export class CardItemComponent {
+  @Input({ required: true }) card!: Card;
+  @Output() remover = new EventEmitter<Card>();
+  @Output() abrirEdicao = new EventEmitter<Card>();
+}
+```
+
+`src/app/card-item/card-item.html`:
+
+```html
+<div class="card">
+  @if (card.etiqueta) {
+    <span class="tag" [style.background]="card.etiqueta.corHex">{{ card.etiqueta.nome }}</span>
+  }
+  <div class="cabecalho">
+    <strong>{{ card.titulo }}</strong>
+    <div class="acoes-card">
+      <button class="editar" (click)="abrirEdicao.emit(card)">Editar</button>
+      <button class="remover" (click)="remover.emit(card)">×</button>
+    </div>
+  </div>
+  @if (card.descricao) {
+    <p class="descricao">{{ card.descricao }}</p>
+  }
+</div>
+```
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+`src/app/app.html`:
+
+```html
+<h1>Kanban</h1>
+<app-card-count />
+<div class="board">
+  <div class="column">
+    <h2>A Fazer</h2>
+    <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+         id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of aFazer; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloAFazer placeholder="Nova tarefa" />
+      <button (click)="adicionar(aFazer, novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Em Andamento</h2>
+    <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+         id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of emAndamento; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+      <button (click)="adicionar(emAndamento, novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+    </div>
+  </div>
+  <div class="column">
+    <h2>Concluído</h2>
+    <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+         id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+      @for (c of concluido; track c.id) {
+        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
+      }
+    </div>
+    <div class="nova-tarefa">
+      <input #novoTituloConcluido placeholder="Nova tarefa" />
+      <button (click)="adicionar(concluido, novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+    </div>
+  </div>
+</div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}
+```
+
+### Descrição Técnica
+
+- Um elemento com `position: fixed` normalmente se posiciona em relação à janela do navegador, mas certas propriedades CSS em um ancestral (como `transform`) podem criar um novo contexto de posicionamento, fazendo esse elemento se posicionar em relação a esse ancestral em vez da janela. Um elemento sob a influência de `cdkDrag` é o tipo de ancestral capaz de introduzir esse contexto — o que é consistente com o deslocamento observado, embora não tenha sido possível confirmá-lo com certeza absoluta sem um navegador real disponível durante o desenvolvimento.
+- A correção definitiva não tenta prever ou neutralizar essa interação por dentro: ela remove a própria possibilidade de o modal ser descendente de qualquer elemento com `cdkDrag`, eliminando por construção toda a família de causas possíveis (propagação de evento, contexto de posicionamento CSS, ou qualquer outra), em vez de apenas a hipótese mais recente.
+- Essa mudança é uma aplicação do padrão de **elevação de estado** (*lifting state up*): "qual card está sendo editado" deixou de pertencer a cada `CardItemComponent` individualmente e passou a pertencer a `App`, o ancestral comum de todos os cards, permitindo que uma única instância do modal seja controlada a partir dali.
+- Como só existe uma instância do modal, renderizada condicionalmente (`@if (cardEmEdicao)`), abrir a edição de outro card enquanto uma já está aberta simplesmente troca o valor de `cardEmEdicao`. O Angular recria o componente do zero a cada transição de `null` para um card (ou de um card para outro), então `ngOnInit` sempre roda de novo com os dados do card correto.
+- `CardEditModalComponent` em si não mudou: continua recebendo um `Card` por `@Input` e devolvendo o resultado por `@Output`, apenas agora vindo de `App`, e não mais de `CardItemComponent`.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **Elevação de estado** (*lifting state up*) | Padrão em que um dado é movido de um componente filho para um componente ancestral comum, permitindo que uma única instância de outro componente (aqui, o modal) seja controlada a partir daquele ponto central, em vez de existir uma cópia por filho. |
+| **Contexto de posicionamento** | Elemento em relação ao qual um descendente com `position: fixed` (ou `absolute`) é posicionado; normalmente a janela do navegador, mas certas propriedades CSS em um ancestral (como `transform`) podem alterar essa referência. |
+| **Propagação de evento** (*event bubbling*) | Comportamento padrão do DOM em que um evento disparado em um elemento continua subindo pela árvore de elementos ancestrais depois de tratado, a menos que algo o interrompa. |
+| **`stopPropagation()`** | Método do objeto de evento do DOM que interrompe essa propagação, impedindo que o evento alcance elementos ancestrais além do ponto em que foi chamado. |
+| **Preview** (Angular CDK) | Elemento clonado que o `cdkDrag` cria por padrão ao iniciar um arraste, para servir de representação visual seguindo o cursor. |
+
+### Resultado
+
+Confirmado pelo usuário: tanto o arraste quanto o redimensionamento do modal passaram a funcionar perfeitamente, sem nenhuma cópia fantasma. A correção definitiva foi estrutural (elevar o modal para fora da árvore do card), não as duas tentativas anteriores de tratamento de evento, que se mostraram necessárias mas insuficientes sozinhas.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
 
 ---
 

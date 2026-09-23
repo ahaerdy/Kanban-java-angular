@@ -1,4 +1,4 @@
-<div class="backdrop">
+<div class="backdrop" (mousedown)="$event.stopPropagation()">
   <div class="modal" #modalRef>
     <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Editar Card</div>
 
