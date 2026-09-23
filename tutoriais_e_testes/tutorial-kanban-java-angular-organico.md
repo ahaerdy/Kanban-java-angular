@@ -3796,7 +3796,454 @@ Abra o modal de edição de um card, clique e arraste pelo cabeçalho: um único
 
 ---
 
-## Encerrando o projeto: por que paramos aqui
+## Parte 19 — Persistindo a Ordem dos Cards Dentro de uma Coluna
+
+### A mentalidade desta parte
+
+Reordenar cards dentro de uma coluna, por arrastar-e-soltar, já funcionava visualmente desde a Parte 6 — `moveItemInArray` reordena o array local na hora. O que nunca existiu é qualquer registro dessa ordem no backend: `Card` não tem, até aqui, nenhum campo que diga "este card vem antes daquele". Um F5 na página dispara `carregar()`, que busca os cards de novo do banco — e o banco devolve as linhas na ordem que lhe for conveniente (tipicamente a ordem de inserção, não a ordem em que você os arrastou), fazendo a reorganização local parecer que nunca aconteceu.
+
+### Arquivos alterados no backend
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java` — substitua todo o conteúdo (novo campo `ordem`, inicializado com o instante de criação em milissegundos, o que já garante que cards novos nascem no fim de qualquer lista ordenada):
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String descricao;
+    private long ordem = System.currentTimeMillis();
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+        @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
+    public long getOrdem() {
+        return ordem;
+    }
+
+    public void setOrdem(long ordem) {
+        this.ordem = ordem;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/ReordenarRequest.java` — arquivo novo:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import java.util.List;
+
+public record ReordenarRequest(List<String> ids) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody Card novo) {
+        return service.criar(novo.getTitulo());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @PutMapping("/reordenar")
+    public void reordenar(@RequestBody ReordenarRequest body) {
+        service.reordenar(body.ids());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll(Sort.by("ordem"));
+    }
+
+    public Card criar(String titulo) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            c.setOrdem(System.currentTimeMillis());
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void reordenar(List<String> ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            long posicao = i;
+            String id = ids.get(i);
+            repository.findById(id).ifPresent(c -> {
+                c.setOrdem(posicao);
+                repository.save(c);
+            });
+        }
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+### Arquivos alterados no frontend
+
+`src/app/models/card.ts` — substitua todo o conteúdo (novo campo `ordem`, presente no JSON, mas que o frontend só recebe e não precisa manipular diretamente):
+
+```typescript
+export interface Etiqueta {
+  nome: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+  ordem: number;
+}
+
+export interface CardEdicao {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+```
+
+`src/app/kanban-api.service.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar() {
+    return this.http.get<Card[]>(this.baseUrl);
+  }
+
+  criar(titulo: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  reordenar(ids: string[]) {
+    return this.http.put<void>(`${this.baseUrl}/reordenar`, { ids });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  carregar() {
+    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string) {
+    this.api.criar(titulo).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  reordenar(ids: string[]) {
+    this.api.reordenar(ids).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts` — substitua todo o conteúdo (a única mudança é dentro de `drop`, no ramo em que a reordenação acontece dentro da mesma coluna):
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      this.state.reordenar(event.container.data.map(c => c.id));
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.html`, `card-item.*` e `card-edit-modal.*` (Parte 18) permanecem exatamente como estavam.
+
+### Explicando
+
+- `ordem`, um `long` em vez de `int`, é inicializado com `System.currentTimeMillis()` — o instante de criação do card, em milissegundos. Esse valor cumpre dois papéis ao mesmo tempo: identifica, por si só, "quando" o card foi criado, e garante que um card recém-criado nasce com um `ordem` maior que qualquer valor pequeno (0, 1, 2, ...) atribuído por uma reordenação manual, então ele sempre aparece no fim da coluna "A Fazer" sem precisar de nenhuma consulta adicional ao banco para descobrir "qual é o maior `ordem` já usado".
+- `KanbanService.listarTodos()` passou a ordenar a consulta por `ordem`, usando `Sort.by("ordem")`, um recurso do Spring Data JPA que traduz o nome do campo para uma cláusula `ORDER BY` na consulta SQL gerada. A ordenação acontece uma vez, sobre a lista inteira de cards, não por coluna — mas como o frontend já filtra essa lista em três arrays separados (`aFazer`, `emAndamento`, `concluido`) preservando a ordem relativa dos elementos filtrados, o resultado é o mesmo que ordenar dentro de cada coluna individualmente.
+- `KanbanService.reordenar(List<String> ids)` recebe a lista de IDs de todos os cards de uma coluna, já na nova ordem desejada, e atribui a cada um o `ordem` igual à sua posição nessa lista (0, 1, 2, ...). O frontend sempre envia a coluna inteira, não cards isolados, porque um arrastar-e-soltar dentro de uma coluna afeta a posição relativa de todos os cards daquela coluna, não só do que foi movido.
+- `App.drop()`, no ramo em que `event.previousContainer === event.container` (arrastar dentro da mesma coluna), continua chamando `moveItemInArray` para a atualização visual imediata, como desde a Parte 6 — e agora, logo em seguida, envia `event.container.data.map(c => c.id)` (a lista de IDs já na nova ordem) para `KanbanStateService.reordenar`, persistindo o resultado.
+- `KanbanService.mover` (arrastar entre colunas diferentes) também passou a atualizar `ordem` para `System.currentTimeMillis()` a cada movimentação — um efeito colateral pequeno, mas útil: um card movido para outra coluna sempre aparece no fim dela, em vez de manter o `ordem` da coluna anterior e potencialmente aparecer intercalado em uma posição arbitrária no meio da nova coluna, depois de um F5.
+- Uma limitação consciente: um arrastar-e-soltar entre colunas diferentes não envia nenhuma chamada a `reordenar` para a coluna de destino — o card sempre aparece no fim dela (via `ordem = System.currentTimeMillis()`), não necessariamente na posição exata em que foi solto. Preservar a posição exata nesse caso exigiria combinar `mover` e `reordenar` na mesma requisição, ou aceitar duas chamadas de rede em sequência para a mesma ação; nenhuma das duas parecia justificada para o problema relatado, que era especificamente sobre reordenar dentro de uma única coluna.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`Sort`** (Spring Data) | Classe que representa um critério de ordenação, passado a métodos como `findAll(Sort)`, e traduzido pelo Spring Data JPA em uma cláusula `ORDER BY` na consulta SQL gerada. |
+| **`System.currentTimeMillis()`** | Método nativo do Java que devolve o instante atual, em milissegundos desde 1º de janeiro de 1970 — usado aqui como um valor sempre crescente, garantindo que cards mais recentes tenham `ordem` maior que cards mais antigos, sem precisar consultar o maior valor já usado. |
+
+### 🧪 Teste rápido
+
+Crie três ou mais cards em uma mesma coluna, arraste-os para mudar sua ordem, e dê um F5 na página: a nova ordem deve se manter, não voltar à anterior. Crie um novo card na coluna "A Fazer": ele deve aparecer no fim da lista, depois dos cards já existentes. Mova um card de uma coluna para outra, dê F5, e confirme que ele aparece no fim da coluna de destino.
+
+
 
 Com a Parte 18, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards editáveis (título, descrição e etiqueta livre) por um modal que agora arrasta e redimensiona corretamente, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17, além disso, é um exemplo do método reagindo a uma mudança de requisito — o catálogo fixo de etiquetas da Parte 14 não foi remendado para caber uma cor livre, foi substituído —, e a Parte 18 é um lembrete de que nem toda implementação sai correta na primeira tentativa: o teste, aqui como em cada parte anterior, não é opcional. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
 
@@ -3805,24 +4252,29 @@ Com a Parte 18, o projeto está funcionalmente completo dentro do escopo definid
 1. **Múltiplos boards** (o print do Gemini mostra "Boards" no menu lateral, no plural). O domínio inteiro, backend e frontend, foi construído assumindo um único board implícito. Adicionar múltiplos boards exigiria uma nova entidade `Board` no backend (cada `Card` passaria a pertencer a um `Board`, não só a uma coluna) e uma tela de listagem/seleção no frontend. Isso é o gatilho `#7` em potencial (um `Card` ganharia mais um parâmetro relacional), mas nenhum consumidor real pediu por múltiplos boards ainda; seria construir a abstração antes da necessidade real, exatamente o que o gatilho `#8`/YAGNI pede para evitar.
 2. **Autenticação e múltiplos usuários.** Hoje qualquer pessoa que acesse `localhost:8080` vê e edita os mesmos cards; não há conceito de dono do card ou de sessão. Adicionar isso exigiria Spring Security, um modelo de usuário e provavelmente JWT: uma camada inteira nova, não uma refatoração incremental. Ficou de fora por decisão de escopo: este projeto, como o Sudoku, é uma prova de conceito de uma pessoa só.
 3. **Sincronização em tempo real entre abas ou dispositivos** (WebSocket). O `KanbanStateService` da Parte 15 resolve a sincronização dentro de uma única aba do navegador, mas se o Kanban for aberto em duas abas e um card for movido em uma delas, a outra só refletiria a mudança em uma próxima chamada a `carregar()`. Resolver isso de fato pediria um canal push do backend para o frontend (STOMP sobre WebSocket, por exemplo). Ficou de fora porque nenhuma necessidade real apareceu: um usuário só, em uma aba só, não sente essa falta.
-4. **Otimizar `KanbanStateService` para não recarregar a lista inteira a cada ação.** Hoje, `mover`/`criar`/`excluir` sempre buscam tudo de novo do backend. Com um board pequeno, isso é imperceptível. Otimizar agora, sem um sintoma real de lentidão, violaria de propósito a Regra 4 do Design Simples (mais elementos no código sem que nenhuma das três primeiras regras exigisse isso).
-5. **Persistência da posição relativa de um card dentro da mesma coluna.** Observado na Parte 11: reordenar cards dentro da mesma coluna, por arrastar e soltar, não é persistido no backend, apenas a mudança entre colunas. Resolver isso exigiria um campo de posição ordinal em `Card` e ajustes correspondentes em todo reordenamento. Ficou de fora pela mesma razão: nenhuma necessidade concreta chegou a apontar para isso.
+4. **Otimizar `KanbanStateService` para não recarregar a lista inteira a cada ação.** Hoje, `mover`/`criar`/`excluir`/`editar`/`reordenar` sempre buscam tudo de novo do backend. Com um board pequeno, isso é imperceptível. Otimizar agora, sem um sintoma real de lentidão, violaria de propósito a Regra 4 do Design Simples (mais elementos no código sem que nenhuma das três primeiras regras exigisse isso).
 
 Nenhuma dessas decisões é definitiva. Como no Sudoku, se uma necessidade real aparecer, o catálogo de gatilhos continua disponível para orientar a próxima extração.
 
 ### Estado final do projeto
 
-- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board, consumindo `KanbanStateService` desde a Parte 16), `CardItemComponent` (renderiza um card e abre o modal de edição), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `KanbanApiService` (fala HTTP com o backend, usado apenas por `KanbanStateService`), `KanbanStateService` (mantém e notifica o estado compartilhado via `BehaviorSubject`), `CardCountComponent` (segundo consumidor real do estado compartilhado, ao lado do próprio `App`).
-- **Backend Spring Boot**: `CardController` (rotas HTTP), `KanbanService` (regras de negócio), `CardRepository` (persistência via Spring Data JPA), `Card`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest` (domínio e contratos de API).
+- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board, consumindo `KanbanStateService` desde a Parte 16), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `KanbanApiService` (fala HTTP com o backend, usado apenas por `KanbanStateService`), `KanbanStateService` (mantém e notifica o estado compartilhado via `BehaviorSubject`), `CardCountComponent` (segundo consumidor real do estado compartilhado, ao lado do próprio `App`).
+- **Backend Spring Boot**: `CardController` (rotas HTTP), `KanbanService` (regras de negócio), `CardRepository` (persistência via Spring Data JPA), `Card`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest`/`ReordenarRequest` (domínio e contratos de API).
 - **Edição completa de um card** (título, descrição e etiqueta livre, com nome e cor digitados pelo usuário) por um modal arrastável e redimensionável, sem excluir e recriar o card.
 - **Persistência real** em MySQL, rodando em um container Docker (`docker-compose.yml`), com os dados guardados em um volume Docker, sobrevivendo a reinícios do backend, do container e do próprio banco.
-- **Arrastar-e-soltar** funcional entre as três colunas fixas, com a coluna persistida (a posição relativa dentro da coluna não é).
+- **Arrastar-e-soltar** funcional entre as três colunas fixas, com a coluna e a posição relativa dentro de cada coluna, ambas persistidas.
 - **Sem autenticação, sem múltiplos boards, sem tempo real entre abas**, por decisão consciente registrada acima, não por limitação técnica.
 
 ### Para refletir no seu `LOG.md`
 
 - Em que ponto deste tutorial uma extração pareceu chegar tarde (o problema já era perceptível havia algumas etapas) ou cedo (a abstração criada ficou sem um segundo uso real de imediato)?
 - O paralelo entre `NotifierService` (Sudoku) e `KanbanStateService`/`BehaviorSubject` (aqui) foi útil, ou a tecnologia diferente (Observer escrito à mão versus RxJS) tornou a comparação menos clara do que ajudou?
-- Das cinco tentações descartadas na seção anterior, qual seria a próxima a valer a pena, se este projeto continuasse? O que, especificamente, precisaria se tornar uma necessidade real primeiro, para justificar essa extração?
+- Das quatro tentações descartadas na seção anterior, qual seria a próxima a valer a pena, se este projeto continuasse? O que, especificamente, precisaria se tornar uma necessidade real primeiro, para justificar essa extração?
 
 Como no Sudoku, não existe resposta certa aqui. O valor de fechar um projeto documentando por que se parou é o mesmo valor de documentar por que se continuou em cada etapa anterior: as duas são decisões de engenharia, e as duas merecem estar registradas no LOG.
+
+---
+
+## Encerrando o projeto: por que paramos aqui
+
+Com a Parte 19, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards editáveis por um modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; e a Parte 19, mais uma vez, é a extração de uma tentação antes descartada (item 5 da lista acima, nas versões anteriores deste documento) assim que uma necessidade real — reportada, não hipotética — apareceu. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
