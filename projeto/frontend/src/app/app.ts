@@ -55,9 +55,9 @@ export class App implements OnInit {
     this.state.mover(card.id, novaColuna);
   }
 
-  adicionar(coluna: Card[], titulo: string) {
+  adicionar(colunaId: string, titulo: string) {
     if (!titulo.trim()) return;
-    this.state.criar(titulo);
+    this.state.criar(titulo, COLUNA_POR_ID[colunaId]);
   }
 
   abrirEdicao(card: Card) {

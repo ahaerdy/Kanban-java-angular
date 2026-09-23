@@ -24,8 +24,8 @@ public class CardController {
     }
 
     @PostMapping
-    public Card criar(@RequestBody Card novo) {
-        return service.criar(novo.getTitulo());
+    public Card criar(@RequestBody CardCreateRequest body) {
+        return service.criar(body.titulo(), body.coluna());
     }
 
     @PutMapping("/{id}/coluna")

@@ -17,8 +17,8 @@ export class KanbanStateService {
     this.api.mover(id, coluna).subscribe(() => this.carregar());
   }
 
-  criar(titulo: string) {
-    this.api.criar(titulo).subscribe(() => this.carregar());
+  criar(titulo: string, coluna: string) {
+    this.api.criar(titulo, coluna).subscribe(() => this.carregar());
   }
 
   editar(edicao: CardEdicao) {

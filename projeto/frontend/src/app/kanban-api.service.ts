@@ -11,8 +11,8 @@ export class KanbanApiService {
     return this.http.get<Card[]>(this.baseUrl);
   }
 
-  criar(titulo: string) {
-    return this.http.post<Card>(this.baseUrl, { titulo });
+  criar(titulo: string, coluna: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo, coluna });
   }
 
   mover(id: string, coluna: string) {

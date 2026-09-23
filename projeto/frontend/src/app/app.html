@@ -11,7 +11,7 @@
     </div>
     <div class="nova-tarefa">
       <input #novoTituloAFazer placeholder="Nova tarefa" />
-      <button (click)="adicionar(aFazer, novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+      <button (click)="adicionar('aFazer', novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
     </div>
   </div>
   <div class="column">
@@ -24,7 +24,7 @@
     </div>
     <div class="nova-tarefa">
       <input #novoTituloEmAndamento placeholder="Nova tarefa" />
-      <button (click)="adicionar(emAndamento, novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+      <button (click)="adicionar('emAndamento', novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
     </div>
   </div>
   <div class="column">
@@ -37,7 +37,7 @@
     </div>
     <div class="nova-tarefa">
       <input #novoTituloConcluido placeholder="Nova tarefa" />
-      <button (click)="adicionar(concluido, novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+      <button (click)="adicionar('concluido', novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
     </div>
   </div>
 </div>

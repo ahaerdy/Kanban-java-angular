@@ -23,8 +23,8 @@ public class KanbanService {
         return repository.findAll(Sort.by("ordem"));
     }
 
-    public Card criar(String titulo) {
-        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
+    public Card criar(String titulo, ColunaEnum coluna) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, coluna);
         return repository.save(novo);
     }
 
