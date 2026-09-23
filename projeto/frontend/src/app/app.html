@@ -6,7 +6,7 @@
     <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
          id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
       @for (c of aFazer; track c.id) {
-        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (editar)="editar($event)" />
+        <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
       }
     </div>
     <div class="nova-tarefa">
@@ -19,7 +19,7 @@
     <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
          id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
       @for (c of emAndamento; track c.id) {
-        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (editar)="editar($event)" />
+        <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
       }
     </div>
     <div class="nova-tarefa">
@@ -32,7 +32,7 @@
     <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
          id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
       @for (c of concluido; track c.id) {
-        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (editar)="editar($event)" />
+        <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
       }
     </div>
     <div class="nova-tarefa">
@@ -41,3 +41,7 @@
     </div>
   </div>
 </div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}

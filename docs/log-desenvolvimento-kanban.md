@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`.
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`. Por fim, a ordem dos cards dentro de uma coluna, alterada por arrastar-e-soltar, passou a ser persistida no backend, sobrevivendo a um F5 na página.
 
 ---
 
@@ -47,6 +47,7 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 16: Migração de `App` para o `KanbanStateService`](#parte-16-migração-de-app-para-o-kanbanstateservice)
 - [Parte 17: Edição Completa de Card por Modal Arrastável](#parte-17-edição-completa-de-card-por-modal-arrastável)
 - [Parte 18: Corrigindo o Arraste e o Redimensionamento do Modal](#parte-18-corrigindo-o-arraste-e-o-redimensionamento-do-modal)
+- [Parte 19: Persistindo a Ordem dos Cards Dentro de uma Coluna](#parte-19-persistindo-a-ordem-dos-cards-dentro-de-uma-coluna)
 
 ---
 
@@ -3669,6 +3670,476 @@ export class App implements OnInit {
 ### Resultado
 
 Confirmado pelo usuário: tanto o arraste quanto o redimensionamento do modal passaram a funcionar perfeitamente, sem nenhuma cópia fantasma. A correção definitiva foi estrutural (elevar o modal para fora da árvore do card), não as duas tentativas anteriores de tratamento de evento, que se mostraram necessárias mas insuficientes sozinhas.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 19: Persistindo a Ordem dos Cards Dentro de uma Coluna
+
+### Objetivo
+
+Persistir, no backend, a ordem em que os cards ficam dentro de uma mesma coluna depois de um arrastar-e-soltar, para que essa ordem sobreviva a um F5 na página.
+
+### Limitação Identificada
+
+Reordenar cards dentro de uma coluna, por arrastar-e-soltar, já funcionava visualmente desde a Parte 6 — `moveItemInArray` reordena o array local na hora. Nenhum campo em `Card`, porém, registrava essa ordem: um F5 disparava `carregar()`, que buscava os cards de novo do banco, e o banco devolvia as linhas na ordem que lhe fosse conveniente (tipicamente a ordem de inserção), fazendo a reorganização local parecer que nunca tinha acontecido.
+
+### Implementação Realizada
+
+- Novo campo `ordem` (`long`) em `Card`, inicializado com `System.currentTimeMillis()` na criação — garante que um card novo nasce com um valor maior que qualquer posição pequena (0, 1, 2, ...) atribuída por uma reordenação manual, sem precisar consultar o maior `ordem` já em uso.
+- Novo `record` `ReordenarRequest`, no pacote `web`, carregando a lista de IDs de uma coluna inteira, já na nova ordem.
+- Novo endpoint `PUT /cards/reordenar`, em `CardController`, repassando para um novo método `reordenar` em `KanbanService`, que atribui a cada ID sua posição na lista recebida (0, 1, 2, ...).
+- `KanbanService.listarTodos()` passou a ordenar a consulta por `ordem`, via `Sort.by("ordem")` do Spring Data JPA.
+- `KanbanService.mover` (arrastar entre colunas diferentes) passou também a atualizar `ordem` para `System.currentTimeMillis()`, para que um card movido para outra coluna sempre apareça no fim dela, e não intercalado em alguma posição arbitrária da coluna de destino.
+- `models/card.ts`: novo campo `ordem: number`, recebido do backend, mas não manipulado diretamente pelo frontend.
+- `kanban-api.service.ts`/`kanban-state.service.ts`: novo método `reordenar`, seguindo o mesmo padrão de `mover`/`criar`/`excluir`/`editar` (a chamada à API é seguida de uma nova chamada a `carregar()`).
+- `App.drop()`, no ramo em que o arrasto acontece dentro da mesma coluna, passou a chamar `KanbanStateService.reordenar` com a lista de IDs já na nova ordem, logo depois do `moveItemInArray` que já existia desde a Parte 6.
+
+### Dificuldade Identificada Durante a Implementação
+
+Depois de aplicar a Parte 19, a edição de um card pelo modal (Parte 17/18) parou de funcionar: o clique em "Salvar" não gerava nenhuma requisição `PUT` na aba Network do navegador, e o console acusava `TypeError: ctx_r2.editar is not a function`.
+
+A causa não estava na Parte 19: era uma dessincronia entre arquivos deixada pela Parte 18. Aquela parte exigia substituir quatro arquivos ao mesmo tempo (`card-item.ts`, `card-item.html`, `app.ts`, `app.html`), porque a correção era estrutural — mover o modal de dentro do card para dentro de `App`. Apenas `app.ts` tinha sido atualizado (correndo, coincidentemente, a versão correta, já que a Parte 19 também altera esse arquivo); `app.html`, `card-item.ts` e `card-item.html` continuavam com o conteúdo da Parte 17, em que `app.html` chamava `(editar)="editar($event)"` — um método que não existe mais em `App` desde a Parte 18, causando o erro observado. Copiar os três arquivos remanescentes da Parte 18 resolveu o problema, sem qualquer alteração de código nova.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String descricao;
+    private long ordem = System.currentTimeMillis();
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+        @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
+    public long getOrdem() {
+        return ordem;
+    }
+
+    public void setOrdem(long ordem) {
+        this.ordem = ordem;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/ReordenarRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import java.util.List;
+
+public record ReordenarRequest(List<String> ids) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody Card novo) {
+        return service.criar(novo.getTitulo());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @PutMapping("/reordenar")
+    public void reordenar(@RequestBody ReordenarRequest body) {
+        service.reordenar(body.ids());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll(Sort.by("ordem"));
+    }
+
+    public Card criar(String titulo) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, ColunaEnum.A_FAZER);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            c.setOrdem(System.currentTimeMillis());
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void reordenar(List<String> ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            long posicao = i;
+            String id = ids.get(i);
+            repository.findById(id).ifPresent(c -> {
+                c.setOrdem(posicao);
+                repository.save(c);
+            });
+        }
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+`src/app/models/card.ts`:
+
+```typescript
+export interface Etiqueta {
+  nome: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+  ordem: number;
+}
+
+export interface CardEdicao {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+```
+
+`src/app/kanban-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar() {
+    return this.http.get<Card[]>(this.baseUrl);
+  }
+
+  criar(titulo: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  reordenar(ids: string[]) {
+    return this.http.put<void>(`${this.baseUrl}/reordenar`, { ids });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  carregar() {
+    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string) {
+    this.api.criar(titulo).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  reordenar(ids: string[]) {
+    this.api.reordenar(ids).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      this.state.reordenar(event.container.data.map(c => c.id));
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(coluna: Card[], titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+
+### Descrição Técnica
+
+- `ordem`, um `long` inicializado com `System.currentTimeMillis()`, cumpre dois papéis: registra "quando" o card foi criado e garante que um card novo nasce com um valor maior que qualquer posição pequena atribuída por uma reordenação manual — sempre no fim da coluna "A Fazer", sem nenhuma consulta adicional ao banco.
+- `Sort.by("ordem")` traduz o nome do campo para uma cláusula `ORDER BY` na consulta SQL gerada pelo Spring Data JPA. A ordenação acontece sobre a lista inteira de cards, não por coluna — mas como o frontend já filtra essa lista em três arrays separados, preservando a ordem relativa dos elementos filtrados, o resultado equivale a ordenar dentro de cada coluna.
+- `KanbanService.reordenar` recebe a coluna inteira, não cards isolados, porque um arrastar-e-soltar dentro de uma coluna afeta a posição relativa de todos os cards daquela coluna, não só do que foi movido.
+- Uma limitação consciente: um arrastar-e-soltar entre colunas diferentes não envia nenhuma chamada a `reordenar` para a coluna de destino — o card sempre aparece no fim dela (via `ordem = System.currentTimeMillis()` em `mover`), não necessariamente na posição exata em que foi solto. Preservar a posição exata nesse caso exigiria combinar `mover` e `reordenar` na mesma requisição, ou duas chamadas de rede em sequência; nenhuma das duas parecia justificada para o problema relatado, que era especificamente sobre reordenar dentro de uma única coluna.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`Sort`** (Spring Data) | Classe que representa um critério de ordenação, passado a métodos como `findAll(Sort)`, e traduzido pelo Spring Data JPA em uma cláusula `ORDER BY` na consulta SQL gerada. |
+| **`System.currentTimeMillis()`** | Método nativo do Java que devolve o instante atual, em milissegundos desde 1º de janeiro de 1970 — usado aqui como um valor sempre crescente, garantindo que cards mais recentes tenham `ordem` maior que cards mais antigos. |
+
+### Resultado
+
+Confirmado pelo usuário: a ordem dos cards dentro de uma coluna passou a sobreviver a um F5. A edição de cards pelo modal, que parou de funcionar após a atualização parcial dos arquivos do frontend, voltou a funcionar assim que os três arquivos remanescentes da Parte 18 foram sincronizados — sem qualquer mudança de código além da que já estava documentada naquela parte.
 
 <!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
 <p align="center">

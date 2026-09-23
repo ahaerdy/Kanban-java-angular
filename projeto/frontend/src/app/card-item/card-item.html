@@ -5,7 +5,7 @@
   <div class="cabecalho">
     <strong>{{ card.titulo }}</strong>
     <div class="acoes-card">
-      <button class="editar" (click)="editando = true">Editar</button>
+      <button class="editar" (click)="abrirEdicao.emit(card)">Editar</button>
       <button class="remover" (click)="remover.emit(card)">×</button>
     </div>
   </div>
@@ -13,7 +13,3 @@
     <p class="descricao">{{ card.descricao }}</p>
   }
 </div>
-
-@if (editando) {
-  <app-card-edit-modal [card]="card" (salvar)="salvar($event)" (cancelar)="editando = false" />
-}
