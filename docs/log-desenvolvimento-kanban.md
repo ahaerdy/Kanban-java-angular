@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`. Por fim, a ordem dos cards dentro de uma coluna, alterada por arrastar-e-soltar, passou a ser persistida no backend, sobrevivendo a um F5 na página.
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`. Por fim, a ordem dos cards dentro de uma coluna, alterada por arrastar-e-soltar, passou a ser persistida no backend, sobrevivendo a um F5 na página. Por fim, um card criado a partir de "Em Andamento" ou "Concluído" passou a nascer na coluna correta, em vez de sempre em "A Fazer".
 
 ---
 
@@ -48,6 +48,7 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 17: Edição Completa de Card por Modal Arrastável](#parte-17-edição-completa-de-card-por-modal-arrastável)
 - [Parte 18: Corrigindo o Arraste e o Redimensionamento do Modal](#parte-18-corrigindo-o-arraste-e-o-redimensionamento-do-modal)
 - [Parte 19: Persistindo a Ordem dos Cards Dentro de uma Coluna](#parte-19-persistindo-a-ordem-dos-cards-dentro-de-uma-coluna)
+- [Parte 20: Corrigindo a Coluna de Criação de um Card](#parte-20-corrigindo-a-coluna-de-criação-de-um-card)
 
 ---
 
@@ -4140,6 +4141,356 @@ export class App implements OnInit {
 ### Resultado
 
 Confirmado pelo usuário: a ordem dos cards dentro de uma coluna passou a sobreviver a um F5. A edição de cards pelo modal, que parou de funcionar após a atualização parcial dos arquivos do frontend, voltou a funcionar assim que os três arquivos remanescentes da Parte 18 foram sincronizados — sem qualquer mudança de código além da que já estava documentada naquela parte.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 20: Corrigindo a Coluna de Criação de um Card
+
+### Objetivo
+
+Corrigir um card criado em "Em Andamento" ou "Concluído" sempre aparecer em "A Fazer", independentemente de qual campo "Nova tarefa" foi usado.
+
+### Limitação Identificada
+
+O bug tinha causa em dois lugares distintos, um em cada ponta da aplicação. No frontend, `App.adicionar(coluna: Card[], titulo: string)` recebia um parâmetro `coluna`, mas nunca o usava — um parâmetro morto desde a Parte 16: ele existia para permitir `coluna.push(novo)`, uma atualização otimista direta no array daquela coluna, mas a migração de `App` para `KanbanStateService` (cujo `criar()` já dispara `carregar()` sozinho) tornou esse `push` redundante, e a linha foi removida na época sem que o parâmetro, agora inútil, fosse removido junto. No backend, `CardController.criar` aceitava um `Card` inteiro no corpo da requisição, mas só lia `novo.getTitulo()`; `KanbanService.criar(String titulo)` gravava `ColunaEnum.A_FAZER` fixo, para todo card novo, sem exceção. Mesmo que o frontend enviasse a coluna certa, o backend a ignoraria.
+
+### Implementação Realizada
+
+- Novo `record` `CardCreateRequest`, no pacote `web`, com `titulo` e `coluna`, seguindo o mesmo padrão já estabelecido por `ColunaRequest` (Parte 13), `CardEditRequest` (Parte 17) e `ReordenarRequest` (Parte 19) — um corpo de requisição dedicado, em vez de reaproveitar a entidade `Card` inteira.
+- `CardController.criar` passou a receber `CardCreateRequest` em vez de `Card`, repassando `titulo` e `coluna` para `KanbanService.criar`.
+- `KanbanService.criar` passou a receber `ColunaEnum coluna` como parâmetro, em vez de gravar `ColunaEnum.A_FAZER` fixo.
+- `App.adicionar` passou a receber `colunaId: string` (o mesmo identificador textual — `'aFazer'`, `'emAndamento'`, `'concluido'` — já usado como `id` de cada `cdkDropList` desde a Parte 6), traduzindo-o via `COLUNA_POR_ID` (a mesma tradução que `drop()` já fazia) antes de repassar para `KanbanStateService.criar`.
+- `KanbanApiService.criar`/`KanbanStateService.criar` passaram a receber `coluna: string` como segundo parâmetro, enviado no corpo do `POST`.
+- `app.html`: as três chamadas a `adicionar`, uma por botão "+", passaram a enviar o identificador da coluna correspondente, em vez do array (que nunca era usado).
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/web/CardCreateRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.ColunaEnum;
+
+public record CardCreateRequest(String titulo, ColunaEnum coluna) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody CardCreateRequest body) {
+        return service.criar(body.titulo(), body.coluna());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @PutMapping("/reordenar")
+    public void reordenar(@RequestBody ReordenarRequest body) {
+        service.reordenar(body.ids());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos() {
+        return repository.findAll(Sort.by("ordem"));
+    }
+
+    public Card criar(String titulo, ColunaEnum coluna) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, coluna);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            c.setOrdem(System.currentTimeMillis());
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void reordenar(List<String> ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            long posicao = i;
+            String id = ids.get(i);
+            repository.findById(id).ifPresent(c -> {
+                c.setOrdem(posicao);
+                repository.save(c);
+            });
+        }
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+`src/app/kanban-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar() {
+    return this.http.get<Card[]>(this.baseUrl);
+  }
+
+  criar(titulo: string, coluna: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo, coluna });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  reordenar(ids: string[]) {
+    return this.http.put<void>(`${this.baseUrl}/reordenar`, { ids });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  carregar() {
+    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string, coluna: string) {
+    this.api.criar(titulo, coluna).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  reordenar(ids: string[]) {
+    this.api.reordenar(ids).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { KanbanStateService } from './kanban-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+    this.state.carregar();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      this.state.reordenar(event.container.data.map(c => c.id));
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(colunaId: string, titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo, COLUNA_POR_ID[colunaId]);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+}
+```
+`src/app/app.html` — as três chamadas a `adicionar`, uma por coluna, passam a enviar o identificador da coluna em vez do array (o restante do arquivo não muda em relação à Parte 18):
+
+```html
+<button (click)="adicionar('aFazer', novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+```
+```html
+<button (click)="adicionar('emAndamento', novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+```
+```html
+<button (click)="adicionar('concluido', novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+```
+
+### Descrição Técnica
+
+- `CardCreateRequest`, como corpo de `POST /cards`, evita o problema que reaproveitar `Card` como tipo de entrada sempre carregava: um cliente da API poderia, em tese, enviar `id`, `ordem`, `etiqueta` ou `descricao` no corpo de uma criação, todos silenciosamente ignorados por `KanbanService.criar`, que só lia `getTitulo()`. Um `record` dedicado tem exatamente os campos que a operação usa, nem mais nem menos.
+- `ColunaEnum coluna`, como campo de `CardCreateRequest`, é desserializado pelo Jackson a partir do nome da constante (por exemplo, `"EM_ANDAMENTO"`), do mesmo jeito que já acontece em `ColunaRequest` desde a Parte 13 — incluindo a mesma proteção: um valor de coluna inexistente no corpo do `POST` é rejeitado com `400 Bad Request`, antes mesmo de `KanbanService.criar` ser chamado.
+- `COLUNA_POR_ID[colunaId]`, em `adicionar`, reaproveita a mesma tradução de identificador de interface (`'aFazer'`) para valor esperado pelo backend (`'A_FAZER'`) que `drop()` já fazia para o arrastar-e-soltar entre colunas — nenhum mapa novo foi criado, só um segundo uso do que já existia.
+- O bug ilustra como um parâmetro sem uso pode sobreviver a várias partes sem gerar nenhum aviso do compilador (TypeScript não reclama de um parâmetro declarado e nunca lido, apenas de um parâmetro nunca *passado*), e como só um teste funcional concreto — criar um card fora da primeira coluna — revela esse tipo de lacuna, que a leitura do código, sozinha, é fácil de não notar.
+
+### Resultado
+
+Confirmado pelo usuário: cards criados em "Em Andamento" e em "Concluído" passaram a aparecer nas colunas corretas, inclusive depois de um F5 na página.
 
 <!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
 <p align="center">
