@@ -953,6 +953,8 @@ export class App {
 | **`@Output()` / `EventEmitter`** | Decorator e classe, complementares ao `@Input()`, que permitem a um componente filho emitir eventos customizados para o componente pai. |
 | **Variável de referência de template (`#nome`)** | Identificador declarado em um elemento do template, com escopo em todo o arquivo, utilizado para acessar aquele elemento (ou seu valor) em outro ponto do mesmo template. |
 
+### 🟩 [Entendendo a Parte 07](./aprofundamentos/entendendo_a_parte_07.md)
+
 ### Resultado
 
 Criação e remoção de cards validadas com sucesso em todas as três colunas. A execução ocorreu conforme previsto, sem necessidade de ajustes adicionais em relação ao planejado.
