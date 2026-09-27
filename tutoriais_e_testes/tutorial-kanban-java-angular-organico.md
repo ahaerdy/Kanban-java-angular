@@ -4258,12 +4258,13 @@ Nenhuma dessas decisões é definitiva. Como no Sudoku, se uma necessidade real 
 
 ### Estado final do projeto
 
-- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board, consumindo `KanbanStateService` desde a Parte 16), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `KanbanApiService` (fala HTTP com o backend, usado apenas por `KanbanStateService`), `KanbanStateService` (mantém e notifica o estado compartilhado via `BehaviorSubject`), `CardCountComponent` (segundo consumidor real do estado compartilhado, ao lado do próprio `App`).
-- **Backend Spring Boot**: `CardController` (rotas HTTP), `KanbanService` (regras de negócio), `CardRepository` (persistência via Spring Data JPA), `Card`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest`/`ReordenarRequest`/`CardCreateRequest` (domínio e contratos de API).
+- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board e a barra lateral, consumindo `KanbanStateService` e `BoardStateService`), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `BoardSelectorModalComponent` (seleção e criação de painéis), `KanbanApiService`/`KanbanStateService` (estado dos cards do painel selecionado), `BoardApiService`/`BoardStateService` (estado da lista de painéis e do painel selecionado), `CardCountComponent` (segundo consumidor real do estado compartilhado de cards).
+- **Backend Spring Boot**: `CardController`/`BoardController` (rotas HTTP), `KanbanService`/`BoardService` (regras de negócio), `CardRepository`/`BoardRepository` (persistência via Spring Data JPA), `Card`/`Board`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest`/`ReordenarRequest`/`CardCreateRequest`/`BoardCreateRequest` (domínio e contratos de API).
+- **Múltiplos painéis nomeados**, cada um com suas próprias três colunas fixas e seus próprios cards, com migração automática dos cards já existentes para um painel padrão na primeira inicialização após esta parte.
 - **Edição completa de um card** (título, descrição e etiqueta livre, com nome e cor digitados pelo usuário) por um modal arrastável e redimensionável, sem excluir e recriar o card.
 - **Persistência real** em MySQL, rodando em um container Docker (`docker-compose.yml`), com os dados guardados em um volume Docker, sobrevivendo a reinícios do backend, do container e do próprio banco.
 - **Arrastar-e-soltar** funcional entre as três colunas fixas, com a coluna e a posição relativa dentro de cada coluna, ambas persistidas.
-- **Sem autenticação, sem múltiplos boards, sem tempo real entre abas**, por decisão consciente registrada acima, não por limitação técnica.
+- **Sem autenticação, sem tempo real entre abas, sem funcionalidade por trás de "Etiquetas", "Config." e "Ajuda"** na barra lateral, por decisão consciente registrada acima, não por limitação técnica.
 
 ### Para refletir no seu `LOG.md`
 
@@ -4609,6 +4610,946 @@ Crie um card pelo campo "Nova tarefa" de "Em Andamento": ele deve aparecer ali, 
 
 ---
 
+## Parte 21 — Múltiplos Painéis (Boards)
+
+### A mentalidade desta parte
+
+Até aqui, o projeto tinha exatamente um quadro implícito: todo card, em qualquer lugar do sistema, era só "um card". Passar a suportar vários painéis nomeados, cada um com suas próprias três colunas e seus próprios cards, exige um conceito novo de domínio — `Board` — e uma pergunta que atravessa todas as camadas: a partir de agora, toda operação sobre cards precisa saber *de qual painel* está falando.
+
+Um cuidado que não pode faltar: este projeto já tem cards reais, gravados no banco, criados ao longo de vinte partes, sem nenhuma noção de painel. Adicionar uma coluna `board_id` à tabela `card`, por si só, não teletransporta esses cards para painel nenhum — eles nascem com `board_id` nulo, exatamente o mesmo tipo de órfão já visto nas Partes 14 e 18. A diferença desta vez é que a correção não fica para o leitor aplicar manualmente por SQL: o próprio backend, ao subir, garante um painel padrão e migra os cards órfãos para dentro dele automaticamardaticamente — sem exigir nenhum passo manual, sem apagar nada.
+
+### Arquivos criados no backend
+
+`src/main/java/com/github/ahaerdy/backend/model/Board.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+
+@Entity
+public class Board {
+
+    @Id
+    private String id;
+    private String nome;
+
+    public Board() {
+    }
+
+    public Board(String id, String nome) {
+        this.id = id;
+        this.nome = nome;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getNome() {
+        return nome;
+    }
+
+    public void setNome(String nome) {
+        this.nome = nome;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/repository/BoardRepository.java`:
+
+```java
+package com.github.ahaerdy.backend.repository;
+
+import com.github.ahaerdy.backend.model.Board;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface BoardRepository extends JpaRepository<Board, String> {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardCreateRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+public record BoardCreateRequest(String nome) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.service.BoardService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/boards")
+public class BoardController {
+
+    private final BoardService service;
+
+    public BoardController(BoardService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Board> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Board criar(@RequestBody BoardCreateRequest body) {
+        return service.criar(body.nome());
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+}
+```
+
+
+### Arquivos alterados no backend
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java` — substitua todo o conteúdo (novo campo `boardId`, incluído no construtor):
+
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String descricao;
+    private long ordem = System.currentTimeMillis();
+    private String boardId;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+        @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna, String boardId) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+        this.boardId = boardId;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
+    public long getOrdem() {
+        return ordem;
+    }
+
+    public void setOrdem(long ordem) {
+        this.ordem = ordem;
+    }
+
+    public String getBoardId() {
+        return boardId;
+    }
+
+    public void setBoardId(String boardId) {
+        this.boardId = boardId;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/repository/CardRepository.java`:
+
+```java
+package com.github.ahaerdy.backend.repository;
+
+import com.github.ahaerdy.backend.model.Card;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface CardRepository extends JpaRepository<Card, String> {
+
+    List<Card> findByBoardId(String boardId, Sort sort);
+
+    List<Card> findByBoardIdIsNull();
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardCreateRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.ColunaEnum;
+
+public record CardCreateRequest(String titulo, ColunaEnum coluna, String boardId) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar(@RequestParam String boardId) {
+        return service.listarTodos(boardId);
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody CardCreateRequest body) {
+        return service.criar(body.titulo(), body.coluna(), body.boardId());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @PutMapping("/reordenar")
+    public void reordenar(@RequestBody ReordenarRequest body) {
+        service.reordenar(body.ids());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos(String boardId) {
+        return repository.findByBoardId(boardId, Sort.by("ordem"));
+    }
+
+    public Card criar(String titulo, ColunaEnum coluna, String boardId) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, coluna, boardId);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            c.setOrdem(System.currentTimeMillis());
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void reordenar(List<String> ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            long posicao = i;
+            String id = ids.get(i);
+            repository.findById(id).ifPresent(c -> {
+                c.setOrdem(posicao);
+                repository.save(c);
+            });
+        }
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+
+### Arquivos criados no frontend
+
+`src/app/models/board.ts` — arquivo novo:
+
+```typescript
+export interface Board {
+  id: string;
+  nome: string;
+}
+```
+
+`src/app/board-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/boards';
+
+  listar() {
+    return this.http.get<Board[]>(this.baseUrl);
+  }
+
+  criar(nome: string) {
+    return this.http.post<Board>(this.baseUrl, { nome });
+  }
+}
+```
+
+`src/app/board-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { BoardApiService } from './board-api.service';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardStateService {
+  private api = inject(BoardApiService);
+
+  private boardsSubject = new BehaviorSubject<Board[]>([]);
+  readonly boards$ = this.boardsSubject.asObservable();
+
+  private boardAtualSubject = new BehaviorSubject<Board | null>(null);
+  readonly boardAtual$ = this.boardAtualSubject.asObservable();
+
+  carregarBoards() {
+    this.api.listar().subscribe(boards => {
+      this.boardsSubject.next(boards);
+      if (!this.boardAtualSubject.value && boards.length > 0) {
+        this.selecionar(boards[0]);
+      }
+    });
+  }
+
+  selecionar(board: Board) {
+    this.boardAtualSubject.next(board);
+  }
+
+  criar(nome: string) {
+    this.api.criar(nome).subscribe(novo => {
+      this.boardsSubject.next([...this.boardsSubject.value, novo]);
+      this.selecionar(novo);
+    });
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.ts`:
+
+```typescript
+import { Component, EventEmitter, Output, inject } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { BoardStateService } from '../board-state.service';
+import { Board } from '../models/board';
+
+@Component({
+  imports: [AsyncPipe],
+  selector: 'app-board-selector-modal',
+  styleUrl: './board-selector-modal.scss',
+  templateUrl: './board-selector-modal.html',
+})
+export class BoardSelectorModalComponent {
+  private boards = inject(BoardStateService);
+  @Output() fechar = new EventEmitter<void>();
+
+  boards$ = this.boards.boards$;
+
+  selecionar(board: Board) {
+    this.boards.selecionar(board);
+    this.fechar.emit();
+  }
+
+  criar(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo) return;
+    this.boards.criar(limpo);
+    this.fechar.emit();
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.html`:
+
+```html
+<div class="backdrop">
+  <div class="modal">
+    <div class="cabecalho-modal">Painéis</div>
+
+    <ul class="lista-boards">
+      @for (b of (boards$ | async); track b.id) {
+        <li>
+          <button (click)="selecionar(b)">{{ b.nome }}</button>
+        </li>
+      }
+    </ul>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/board-selector-modal/board-selector-modal.scss`:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+.cabecalho-modal { font-weight: bold; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.lista-boards { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; }
+.lista-boards li { margin-bottom: 4px; }
+.lista-boards button { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; background: #fafafa; cursor: pointer; }
+.lista-boards button:hover { background: #eef2ff; }
+.novo-board { display: flex; gap: 0.5rem; }
+.novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes { display: flex; justify-content: flex-end; }
+```
+
+
+### Arquivos alterados no frontend
+
+`src/app/models/card.ts` — substitua todo o conteúdo (novo campo `boardId`, presente no JSON, mas não manipulado diretamente pelo frontend):
+
+```typescript
+export interface Etiqueta {
+  nome: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+  ordem: number;
+  boardId: string;
+}
+
+export interface CardEdicao {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+```
+
+`src/app/kanban-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar(boardId: string) {
+    return this.http.get<Card[]>(`${this.baseUrl}?boardId=${boardId}`);
+  }
+
+  criar(titulo: string, coluna: string, boardId: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo, coluna, boardId });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  reordenar(ids: string[]) {
+    return this.http.put<void>(`${this.baseUrl}/reordenar`, { ids });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  private boardId: string | null = null;
+
+  selecionarBoard(boardId: string) {
+    this.boardId = boardId;
+    this.carregar();
+  }
+
+  carregar() {
+    if (!this.boardId) return;
+    this.api.listar(this.boardId).subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string, coluna: string) {
+    if (!this.boardId) return;
+    this.api.criar(titulo, coluna, this.boardId).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  reordenar(ids: string[]) {
+    this.api.reordenar(ids).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { BoardSelectorModalComponent } from './board-selector-modal/board-selector-modal';
+import { KanbanStateService } from './kanban-state.service';
+import { BoardStateService } from './board-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [
+    CardItemComponent,
+    DragDropModule,
+    CardCountComponent,
+    CardEditModalComponent,
+    BoardSelectorModalComponent,
+    AsyncPipe,
+  ],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private boards = inject(BoardStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+  seletorDeBoardsAberto = false;
+
+  boardAtual$ = this.boards.boardAtual$;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+
+    this.boards.boardAtual$.subscribe(board => {
+      if (board) {
+        this.state.selecionarBoard(board.id);
+      }
+    });
+
+    this.boards.carregarBoards();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      this.state.reordenar(event.container.data.map(c => c.id));
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(colunaId: string, titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo, COLUNA_POR_ID[colunaId]);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+
+  abrirSeletorDeBoards() {
+    this.seletorDeBoardsAberto = true;
+  }
+
+  fecharSeletorDeBoards() {
+    this.seletorDeBoardsAberto = false;
+  }
+}
+```
+
+`src/app/app.html`:
+
+```html
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo">Kanban</div>
+    <button class="item" (click)="abrirSeletorDeBoards()">Painéis</button>
+    <button class="item" disabled>Etiquetas</button>
+    <button class="item" disabled>Config.</button>
+    <button class="item" disabled>Ajuda</button>
+  </nav>
+
+  <div class="conteudo">
+    <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    <app-card-count />
+    <div class="board">
+      <div class="column">
+        <h2>A Fazer</h2>
+        <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+             id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of aFazer; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloAFazer placeholder="Nova tarefa" />
+          <button (click)="adicionar('aFazer', novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Em Andamento</h2>
+        <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+             id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of emAndamento; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+          <button (click)="adicionar('emAndamento', novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Concluído</h2>
+        <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+             id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of concluido; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloConcluido placeholder="Nova tarefa" />
+          <button (click)="adicionar('concluido', novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}
+
+@if (seletorDeBoardsAberto) {
+  <app-board-selector-modal (fechar)="fecharSeletorDeBoards()" />
+}
+```
+
+`src/app/app.scss`:
+
+```scss
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #1f2430;
+  color: #cfd3dc;
+  padding: 1rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .logo { font-size: 1.2rem; font-weight: bold; color: white; padding: 0 1rem 1rem; }
+
+.sidebar .item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 1rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sidebar .item:hover:not(:disabled) { background: #2b3244; }
+.sidebar .item:disabled { color: #6b7280; cursor: default; }
+
+.conteudo { flex: 1; padding: 1rem; }
+
+.board { display: flex; gap: 1rem; padding: 1rem; }
+.column { background: #eee; border-radius: 8px; padding: 1rem; width: 360px; }
+.dropzone { min-height: 80px; }
+.nova-tarefa { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.nova-tarefa input { flex: 1; min-width: 0; }
+```
+
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `card-item.*` e `card-edit-modal.*` (Parte 18) permanecem exatamente como estavam: um card não precisa saber a qual painel pertence para ser exibido ou editado.
+
+### Explicando
+
+- `Board` é uma entidade mínima, com apenas `id` e `nome` — o suficiente para o que foi pedido. Uma entidade maior (com data de criação, dono, cor, etc.) não foi construída porque nenhum requisito concreto pede isso agora; se um dia pedir, a extração acontece então, não antes.
+- `BoardService.garantirBoardPadrao()`, anotado com `@PostConstruct`, roda uma vez, automaticamente, toda vez que a aplicação Spring sobe — antes de qualquer requisição HTTP ser aceita. A guarda `if (boardRepository.count() > 0) return;` faz esse método ser efetivamente uma migração de "rodar só uma vez": em qualquer inicialização após a primeira, já existe ao menos um painel, e o método não faz nada. Na primeira vez, ele cria um painel chamado "Meu Quadro" e move para dentro dele qualquer card que já existisse no banco sem nenhum painel (`findByBoardIdIsNull()`) — o que cobre exatamente os cards criados nas vinte partes anteriores deste tutorial, sem exigir nenhum comando manual no MySQL, ao contrário do que foi necessário nas Partes 14 e 18.
+- `CardRepository.findByBoardId(String boardId, Sort sort)` é um método de consulta derivada do Spring Data JPA: o nome do método (`findByBoardId`) é interpretado e traduzido para uma cláusula `WHERE board_id = ?` na consulta SQL gerada, e o parâmetro `Sort` adicional continua permitindo a ordenação por `ordem`, como já acontecia desde a Parte 19 — agora combinando os dois filtros na mesma consulta.
+- `GET /cards` passou a exigir um parâmetro de consulta `boardId` (`@RequestParam String boardId`, sem valor padrão): uma chamada sem esse parâmetro é rejeitada com `400 Bad Request`, antes mesmo de `KanbanService` ser chamado — este projeto tem um único frontend consumidor, então a quebra de compatibilidade é aceitável e intencional, no mesmo espírito de outras mudanças de contrato já feitas ao longo do tutorial (por exemplo, a Parte 13).
+- `KanbanStateService` passou a guardar internamente qual painel está selecionado (`private boardId: string | null`), em vez de exigir esse dado a cada chamada de método. `selecionarBoard(boardId)` é o único ponto de entrada que define esse valor — chamado por `App` sempre que `BoardStateService.boardAtual$` emite um novo painel — e todos os demais métodos (`carregar`, `criar`) o leem internamente. Essa decisão evitou espalhar `boardId` como parâmetro por `mover`, `editar`, `reordenar` e `excluir`, que não precisam dele (operam sobre um card já identificado pelo seu próprio `id`).
+- `BoardStateService` segue exatamente o mesmo molde de `KanbanStateService`: um `BehaviorSubject` para a lista de painéis (`boards$`) e outro para o painel atualmente selecionado (`boardAtual$`). `carregarBoards()`, ao terminar de buscar a lista, seleciona automaticamente o primeiro painel caso nenhum já estivesse selecionado (`!this.boardAtualSubject.value`) — o que garante que, na carga inicial da página, algum painel sempre acaba escolhido, sem exigir nenhuma ação do usuário.
+- `App.ngOnInit` conecta os dois serviços: assina `boards.boardAtual$`, e a cada emissão (a seleção inicial automática, uma seleção manual pelo modal, ou a criação de um novo painel) chama `state.selecionarBoard(board.id)`, que dispara `carregar()` internamente. O `<h1>` do template passou a exibir `(boardAtual$ | async)?.nome`, então o nome do painel selecionado aparece automaticamente no topo da página, sem nenhuma lógica adicional em `App`.
+- `BoardSelectorModalComponent` segue a mesma arquitetura de `CardEditModalComponent` (Parte 17/18): um `@Output()` (`fechar`) devolve o controle para quem o abriu, sem decidir nada por conta própria. Diferente do modal de edição de card, este não precisa ser arrastável nem redimensionável — nada no pedido original exigia isso —, e por isso não reaproveita nenhum código daquele componente; são dois modais independentes, cada um do tamanho do problema que resolve.
+- A barra lateral foi escrita diretamente em `app.html`, sem virar um `SidebarComponent` à parte. Nada mais no projeto precisa reutilizá-la — ela existe em um único lugar —, e criar um componente novo só para isolar um pedaço de template usado uma única vez teria sido exatamente o tipo de abstração prematura que este tutorial, desde o paralelo com o Sudoku na Parte 0, tenta evitar. Três dos quatro itens da barra (`Etiquetas`, `Config.`, `Ajuda`) são botões `disabled`, sem nenhum `(click)` — presentes na tela, como a captura de tela de referência pedia, mas conscientemente inertes, porque nenhuma funcionalidade por trás deles foi especificada.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@PostConstruct`** | Anotação (do pacote `jakarta.annotation`) que marca um método para ser executado automaticamente pelo Spring uma única vez, logo após a construção e injeção de dependências de um `@Service` (ou qualquer outro bean gerenciado), e antes de a aplicação começar a atender requisições. |
+| **Consulta derivada** (*derived query*) | Recurso do Spring Data JPA em que o próprio nome de um método de repositório (por exemplo, `findByBoardId`) é interpretado e traduzido automaticamente em uma consulta SQL, sem exigir escrever `@Query` nem SQL manual. |
+| **`@RequestParam`** | Anotação do Spring MVC que vincula um parâmetro de método a um parâmetro de consulta (*query parameter*) da URL — em `GET /cards?boardId=...`, é o que extrai o valor de `boardId`. |
+| **Migração automática** | Estratégia em que o próprio código da aplicação, ao iniciar, detecta e corrige um estado de dados desatualizado (aqui, cards sem painel), em vez de exigir um passo manual do desenvolvedor a cada ambiente onde a aplicação roda. |
+
+### 🧪 Teste rápido
+
+Suba o backend pela primeira vez depois desta mudança: os cards que já existiam antes devem continuar aparecendo normalmente, todos dentro de um painel chamado "Meu Quadro" — confirme clicando em "Painéis" na barra lateral e vendo esse nome na lista. Crie um novo painel pelo botão do modal, dando um nome a ele: o modal deve fechar, o título do topo da página deve mudar para o novo nome, e o quadro deve aparecer vazio (só as três colunas, sem cards). Crie um card nesse painel novo, clique em "Painéis" de novo e volte para "Meu Quadro": os cards antigos devem estar lá, e o card novo não deve aparecer nele — cada painel mantendo seus próprios cards, de forma independente.
+
+---
+
 ## Encerrando o projeto: por que paramos aqui
 
-Com a Parte 20, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: um Kanban de coluna fixa, com cards editáveis por um modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna correta, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; e a Parte 20, mais uma vez, um lembrete de que um parâmetro sem uso (`coluna: Card[]`, esquecido em `adicionar` desde a migração da Parte 16) pode esconder um bug silencioso por várias partes, até que um teste concreto o revele. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
+Com a Parte 21, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por um modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; e a Parte 21, a maior extração de domínio desde a Parte 10 — introduzindo `Board` como novo conceito central —, resolvida com uma migração automática dos dados já existentes, em vez de exigir um passo manual do leitor, como as Partes 14 e 18 haviam exigido. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
