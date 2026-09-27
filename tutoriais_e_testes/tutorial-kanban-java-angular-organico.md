@@ -4258,7 +4258,7 @@ Nenhuma dessas decisões é definitiva. Como no Sudoku, se uma necessidade real 
 
 ### Estado final do projeto
 
-- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board e a barra lateral, consumindo `KanbanStateService` e `BoardStateService`), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `BoardSelectorModalComponent` (seleção e criação de painéis), `KanbanApiService`/`KanbanStateService` (estado dos cards do painel selecionado), `BoardApiService`/`BoardStateService` (estado da lista de painéis e do painel selecionado), `CardCountComponent` (segundo consumidor real do estado compartilhado de cards).
+- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board e a barra lateral, consumindo `KanbanStateService` e `BoardStateService`), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `BoardSelectorModalComponent` (seleção, criação e renomeio de painéis por uma caixa de seleção, arrastável), `KanbanApiService`/`KanbanStateService` (estado dos cards do painel selecionado), `BoardApiService`/`BoardStateService` (estado da lista de painéis e do painel selecionado), `CardCountComponent` (segundo consumidor real do estado compartilhado de cards).
 - **Backend Spring Boot**: `CardController`/`BoardController` (rotas HTTP), `KanbanService`/`BoardService` (regras de negócio), `CardRepository`/`BoardRepository` (persistência via Spring Data JPA), `Card`/`Board`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest`/`ReordenarRequest`/`CardCreateRequest`/`BoardCreateRequest` (domínio e contratos de API).
 - **Múltiplos painéis nomeados**, cada um com suas próprias três colunas fixas e seus próprios cards, com migração automática dos cards já existentes para um painel padrão na primeira inicialização após esta parte.
 - **Edição completa de um card** (título, descrição e etiqueta livre, com nome e cor digitados pelo usuário) por um modal arrastável e redimensionável, sem excluir e recriar o card.
@@ -5557,6 +5557,398 @@ Suba o backend pela primeira vez depois desta mudança: os cards que já existia
 
 ---
 
+## Parte 22 — Selecionando e Renomeando Painéis por uma Caixa de Seleção
+
+### A mentalidade desta parte
+
+O modal de painéis, da Parte 21, listava cada painel como um botão empilhado — funcional, mas visivelmente improvisado assim que o número de painéis cresce. Esta parte substitui essa lista por uma caixa de seleção (`<select>`), e aproveita a oportunidade para acrescentar duas ações que a Parte 21 não previa: renomear o painel escolhido, e abri-lo explicitamente (em vez de qualquer clique já trocar o painel corrente). O modal também passou a ser arrastável.
+
+Uma decisão importante de reaproveitamento: para o arraste, em vez de introduzir `cdkDrag` de novo, este modal reaproveita o mesmo controlador manual de arraste (`iniciarArraste`/`mover`/`pararArraste`, com `@HostListener`) já escrito para `CardEditModalComponent` nas Partes 17 e 18. Tecnicamente, `cdkDrag` funcionaria aqui sem o bug daquelas partes — este modal, assim como o de edição de card, é renderizado por `App`, nunca como descendente de nenhum elemento com `cdkDrag` —, mas reaproveitar um mecanismo já testado e livre de surpresas é mais simples do que reintroduzir uma biblioteca só para descobrir, de novo, alguma interação inesperada.
+
+### Arquivos alterados no backend
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java` — substitua todo o conteúdo (novo endpoint `PUT /boards/{id}`, reaproveitando `BoardCreateRequest` como corpo — a forma do corpo, `{ "nome": "..." }`, é idêntica entre criar e renomear, então um segundo `record` só para isso não pareceu justificado):
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.service.BoardService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/boards")
+public class BoardController {
+
+    private final BoardService service;
+
+    public BoardController(BoardService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Board> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Board criar(@RequestBody BoardCreateRequest body) {
+        return service.criar(body.nome());
+    }
+
+    @PutMapping("/{id}")
+    public void renomear(@PathVariable String id, @RequestBody BoardCreateRequest body) {
+        service.renomear(id, body.nome());
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java` — substitua todo o conteúdo:
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
+}
+```
+
+
+### Arquivos alterados no frontend
+
+`src/app/board-api.service.ts` — substitua todo o conteúdo:
+
+`src/app/board-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/boards';
+
+  listar() {
+    return this.http.get<Board[]>(this.baseUrl);
+  }
+
+  criar(nome: string) {
+    return this.http.post<Board>(this.baseUrl, { nome });
+  }
+
+  renomear(id: string, nome: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { nome });
+  }
+}
+```
+
+`src/app/board-state.service.ts` — substitua todo o conteúdo:
+
+`src/app/board-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { BoardApiService } from './board-api.service';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardStateService {
+  private api = inject(BoardApiService);
+
+  private boardsSubject = new BehaviorSubject<Board[]>([]);
+  readonly boards$ = this.boardsSubject.asObservable();
+
+  private boardAtualSubject = new BehaviorSubject<Board | null>(null);
+  readonly boardAtual$ = this.boardAtualSubject.asObservable();
+
+  carregarBoards() {
+    this.api.listar().subscribe(boards => {
+      this.boardsSubject.next(boards);
+      if (!this.boardAtualSubject.value && boards.length > 0) {
+        this.selecionar(boards[0]);
+      }
+    });
+  }
+
+  selecionar(board: Board) {
+    this.boardAtualSubject.next(board);
+  }
+
+  criar(nome: string) {
+    this.api.criar(nome).subscribe(novo => {
+      this.boardsSubject.next([...this.boardsSubject.value, novo]);
+      this.selecionar(novo);
+    });
+  }
+
+  renomear(id: string, novoNome: string) {
+    this.api.renomear(id, novoNome).subscribe(() => {
+      const atualizados = this.boardsSubject.value.map(b => (b.id === id ? { ...b, nome: novoNome } : b));
+      this.boardsSubject.next(atualizados);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next({ ...atual, nome: novoNome });
+      }
+    });
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.ts` — substitua todo o conteúdo:
+
+`src/app/board-selector-modal/board-selector-modal.ts`:
+
+```typescript
+import { Component, ElementRef, EventEmitter, HostListener, OnInit, Output, ViewChild, inject } from '@angular/core';
+import { BoardStateService } from '../board-state.service';
+import { Board } from '../models/board';
+
+@Component({
+  imports: [],
+  selector: 'app-board-selector-modal',
+  styleUrl: './board-selector-modal.scss',
+  templateUrl: './board-selector-modal.html',
+})
+export class BoardSelectorModalComponent implements OnInit {
+  private boards = inject(BoardStateService);
+  @Output() fechar = new EventEmitter<void>();
+
+  @ViewChild('modalRef') modalRef!: ElementRef<HTMLDivElement>;
+
+  todosBoards: Board[] = [];
+  boardSelecionadoId = '';
+  renomeando = false;
+
+  private arrastando = false;
+  private offsetX = 0;
+  private offsetY = 0;
+
+  ngOnInit() {
+    this.boards.boards$.subscribe(boards => {
+      this.todosBoards = boards;
+      if (!this.boardSelecionadoId && boards.length > 0) {
+        this.boardSelecionadoId = boards[0].id;
+      }
+    });
+    this.boards.boardAtual$.subscribe(atual => {
+      if (atual) {
+        this.boardSelecionadoId = atual.id;
+      }
+    });
+  }
+
+  get boardSelecionado(): Board | undefined {
+    return this.todosBoards.find(b => b.id === this.boardSelecionadoId);
+  }
+
+  selecionarNaLista(id: string) {
+    this.boardSelecionadoId = id;
+    this.renomeando = false;
+  }
+
+  iniciarRenomeio() {
+    if (this.boardSelecionado) {
+      this.renomeando = true;
+    }
+  }
+
+  confirmarRenomeio(novoNome: string) {
+    const limpo = novoNome.trim();
+    if (!limpo || !this.boardSelecionado) return;
+    this.boards.renomear(this.boardSelecionado.id, limpo);
+    this.renomeando = false;
+  }
+
+  abrir() {
+    if (!this.boardSelecionado) return;
+    this.boards.selecionar(this.boardSelecionado);
+    this.fechar.emit();
+  }
+
+  criar(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo) return;
+    this.boards.criar(limpo);
+    this.fechar.emit();
+  }
+
+  iniciarArraste(evento: MouseEvent) {
+    const modal = this.modalRef.nativeElement;
+    const retangulo = modal.getBoundingClientRect();
+
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    modal.style.top = `${retangulo.top}px`;
+    modal.style.left = `${retangulo.left}px`;
+
+    this.arrastando = true;
+    this.offsetX = evento.clientX - retangulo.left;
+    this.offsetY = evento.clientY - retangulo.top;
+    evento.preventDefault();
+    evento.stopPropagation();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  mover(evento: MouseEvent) {
+    if (!this.arrastando) return;
+    const modal = this.modalRef.nativeElement;
+    modal.style.left = `${evento.clientX - this.offsetX}px`;
+    modal.style.top = `${evento.clientY - this.offsetY}px`;
+  }
+
+  @HostListener('document:mouseup')
+  pararArraste() {
+    this.arrastando = false;
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.html` — substitua todo o conteúdo:
+
+`src/app/board-selector-modal/board-selector-modal.html`:
+
+```html
+<div class="backdrop">
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Painéis</div>
+
+    <label>Painel</label>
+    <select #selectBoard (change)="selecionarNaLista(selectBoard.value)">
+      @for (b of todosBoards; track b.id) {
+        <option [value]="b.id" [selected]="b.id === boardSelecionadoId">{{ b.nome }}</option>
+      }
+    </select>
+
+    @if (renomeando) {
+      <div class="renomear">
+        <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
+        <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+        <button (click)="renomeando = false">Cancelar</button>
+      </div>
+    }
+
+    <div class="acoes-board">
+      <button (click)="iniciarRenomeio()">Renomear</button>
+      <button (click)="abrir()">Abrir</button>
+    </div>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/board-selector-modal/board-selector-modal.scss` — substitua todo o conteúdo:
+
+`src/app/board-selector-modal/board-selector-modal.scss`:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.modal label { font-size: 0.8rem; color: #555; }
+.modal select { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-board { display: flex; gap: 0.5rem; }
+.acoes-board button { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.renomear { display: flex; gap: 0.5rem; }
+.renomear input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board { display: flex; gap: 0.5rem; }
+.novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board button, .acoes button, .renomear button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes { display: flex; justify-content: flex-end; }
+```
+
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.ts`/`app.html` (Parte 21) não mudam: `App` continua só abrindo e fechando o modal (`seletorDeBoardsAberto`), sem precisar saber nada sobre como ele exibe ou manipula a lista de painéis internamente.
+
+### Explicando
+
+- O `<select>` substitui a lista de botões da Parte 21. Cada `<option>` usa `[value]="b.id"` e `[selected]="b.id === boardSelecionadoId"` para refletir, na renderização, qual painel está escolhido no momento — sem precisar de `[(ngModel)]` (que exigiria importar `FormsModule`, uma dependência nova para um único campo). A mudança de seleção é capturada pelo evento nativo `(change)`, lido através de uma variável de referência de template (`#selectBoard`) e `.value`, o mesmo padrão já usado em toda entrada de texto deste projeto desde a Parte 7.
+- `boardSelecionadoId` é o painel "em foco" dentro do modal — o alvo de "Renomear" e "Abrir" —, e é distinto do painel realmente ativo no board (`BoardStateService.boardAtual$`). Os dois só se tornam o mesmo quando "Abrir" é clicado. Ao abrir o modal, `ngOnInit` inicializa `boardSelecionadoId` com o painel atualmente aberto (assinando `boardAtual$`), para o `<select>` já nascer apontando para onde o usuário está, mas nada impede escolher outro painel no `<select>` só para renomeá-lo, sem trocar de painel.
+- "Renomear" só revela o formulário de renomeio (`renomeando = true`) se houver um painel de fato selecionado (`boardSelecionado`, um *getter* que busca em `todosBoards` pelo `id` corrente) — uma proteção barata contra o caso (hoje inatingível, já que sempre existe ao menos o painel padrão da Parte 21) de a lista estar vazia. `confirmarRenomeio` chama `BoardStateService.renomear`, que atualiza tanto a lista de painéis quanto, se for o caso, o painel atualmente aberto — para o `<h1>` da página (Parte 21) refletir o novo nome imediatamente, sem esperar um recarregamento.
+- `BoardStateService.renomear` não recarrega a lista inteira do backend (diferente do padrão `carregar()` usado em `KanbanStateService`): como a resposta do `PUT` não traz o painel atualizado, e o único dado que muda é o nome (já conhecido, pois foi o usuário quem o digitou), a lista local é atualizada diretamente com `.map(...)`, evitando uma segunda chamada de rede só para buscar de volta um dado que já se tinha em mãos.
+- "Abrir" é o único ponto em que o modal chama `BoardStateService.selecionar`, trocando de fato o painel ativo do board — e só então fecha o modal (`fechar.emit()`). Escolher um painel no `<select>` ou renomeá-lo não fecha nada, nem troca o board exibido, até "Abrir" ser clicado.
+- O controlador de arraste é uma cópia funcional do já usado em `CardEditModalComponent`: `iniciarArraste` tira o modal do fluxo centralizado do flexbox do `.backdrop` e registra a posição inicial; `@HostListener('document:mousemove')`/`@HostListener('document:mouseup')` atualizam a posição e encerram o arraste. `evento.stopPropagation()` permanece por precaução, mas, como discutido acima, este modal não tem nenhum ancestral com `cdkDrag` — ao contrário do que acontecia com o card antes da Parte 18.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **Variável de referência de template em um `<select>`** | O mesmo mecanismo (`#nome`) já usado em campos de texto deste projeto também funciona em um `<select>`, expondo `.value` como o `value` da `<option>` atualmente selecionada. |
+| **Atualização local de estado** | Quando a resposta de uma chamada à API não traz de volta o dado necessário para atualizar a tela, e esse dado já é conhecido no frontend (por ter sido digitado pelo próprio usuário), atualizar o estado local diretamente evita uma segunda chamada de rede supérflua. |
+
+### 🧪 Teste rápido
+
+Abra o modal "Painéis" com pelo menos dois painéis já criados. Confirme que a caixa de seleção mostra o painel atualmente aberto. Escolha outro painel na caixa, clique em "Renomear", altere o nome e confirme: o nome deve mudar na caixa de seleção, mas o quadro por trás do modal não deve mudar (o painel renomeado não era o que estava aberto). Feche o modal sem clicar em "Abrir", e confirme que o board continua no painel original. Reabra o modal, escolha o painel renomeado, e clique em "Abrir": o modal deve fechar, e o `<h1>` do topo da página deve mostrar o novo nome. Por fim, arraste o modal pelo cabeçalho antes de fechá-lo, e confirme que ele se move como um único elemento, sem nenhuma duplicata.
+
+---
+
 ## Encerrando o projeto: por que paramos aqui
 
-Com a Parte 21, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por um modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; e a Parte 21, a maior extração de domínio desde a Parte 10 — introduzindo `Board` como novo conceito central —, resolvida com uma migração automática dos dados já existentes, em vez de exigir um passo manual do leitor, como as Partes 14 e 18 haviam exigido. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
+Com a Parte 22, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, selecionáveis e renomeáveis por um modal arrastável, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por outro modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; a Parte 21, a maior extração de domínio desde a Parte 10, resolvida com uma migração automática dos dados já existentes; e a Parte 22, um lembrete de que reaproveitar um mecanismo já testado (o arraste manual das Partes 17/18) pode ser mais simples do que reintroduzir uma biblioteca só porque ela "deveria" funcionar. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.

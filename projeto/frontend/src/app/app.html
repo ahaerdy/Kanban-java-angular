@@ -1,6 +1,6 @@
 <div class="layout">
   <nav class="sidebar">
-    <div class="logo">Kanban</div>
+    <div class="logo">🗃️KBoard</div>
     <button class="item" (click)="abrirSeletorDeBoards()">Painéis</button>
     <button class="item" disabled>Etiquetas</button>
     <button class="item" disabled>Config.</button>
@@ -8,7 +8,9 @@
   </nav>
 
   <div class="conteudo">
-    <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    <div class="cabecalho-board">
+      <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    </div>
     <app-card-count />
     <div class="board">
       <div class="column">

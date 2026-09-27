@@ -10,24 +10,28 @@
   flex-direction: column;
 }
 
-.sidebar .logo { font-size: 1.2rem; font-weight: bold; color: white; padding: 0 1rem 1rem; }
+.sidebar .logo { font-size: 1.6rem; font-weight: bold; color: white; padding: 0 1.25rem 1.5rem; }
 
 .sidebar .item {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.6rem 1rem;
+  padding: 0.85rem 1.25rem;
   border: none;
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 1.15rem;
   cursor: pointer;
 }
 
 .sidebar .item:hover:not(:disabled) { background: #2b3244; }
-.sidebar .item:disabled { color: #6b7280; cursor: default; }
+.sidebar .item:disabled { color: #8a92a6; cursor: default; }
 
 .conteudo { flex: 1; padding: 1rem; }
+
+.cabecalho-board { background: #e4e6eb; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1rem; }
+.cabecalho-board h1 { margin: 0; font-size: 1.6rem; }
 
 .board { display: flex; gap: 1rem; padding: 1rem; }
 .column { background: #eee; border-radius: 8px; padding: 1rem; width: 360px; }
