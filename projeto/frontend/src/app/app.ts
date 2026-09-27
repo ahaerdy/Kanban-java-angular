@@ -1,10 +1,13 @@
 import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
 import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
 import { Card, CardEdicao } from './models/card';
 import { CardItemComponent } from './card-item/card-item';
 import { CardCountComponent } from './card-count/card-count';
 import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { BoardSelectorModalComponent } from './board-selector-modal/board-selector-modal';
 import { KanbanStateService } from './kanban-state.service';
+import { BoardStateService } from './board-state.service';
 
 interface CardApi extends Card {
   coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
@@ -17,13 +20,21 @@ const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = 
 };
 
 @Component({
-  imports: [CardItemComponent, DragDropModule, CardCountComponent, CardEditModalComponent],
+  imports: [
+    CardItemComponent,
+    DragDropModule,
+    CardCountComponent,
+    CardEditModalComponent,
+    BoardSelectorModalComponent,
+    AsyncPipe,
+  ],
   selector: 'app-root',
   styleUrl: './app.scss',
   templateUrl: './app.html',
 })
 export class App implements OnInit {
   private state = inject(KanbanStateService);
+  private boards = inject(BoardStateService);
   private cdr = inject(ChangeDetectorRef);
 
   aFazer: Card[] = [];
@@ -31,6 +42,9 @@ export class App implements OnInit {
   concluido: Card[] = [];
 
   cardEmEdicao: Card | null = null;
+  seletorDeBoardsAberto = false;
+
+  boardAtual$ = this.boards.boardAtual$;
 
   ngOnInit() {
     this.state.cards$.subscribe(cards => {
@@ -40,7 +54,14 @@ export class App implements OnInit {
       this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
       this.cdr.markForCheck();
     });
-    this.state.carregar();
+
+    this.boards.boardAtual$.subscribe(board => {
+      if (board) {
+        this.state.selecionarBoard(board.id);
+      }
+    });
+
+    this.boards.carregarBoards();
   }
 
   drop(event: CdkDragDrop<Card[]>) {
@@ -75,5 +96,13 @@ export class App implements OnInit {
 
   remover(coluna: Card[], card: Card) {
     this.state.excluir(card.id);
+  }
+
+  abrirSeletorDeBoards() {
+    this.seletorDeBoardsAberto = true;
+  }
+
+  fecharSeletorDeBoards() {
+    this.seletorDeBoardsAberto = false;
   }
 }

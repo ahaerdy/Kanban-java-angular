@@ -1,0 +1,22 @@
+<div class="backdrop">
+  <div class="modal">
+    <div class="cabecalho-modal">Painéis</div>
+
+    <ul class="lista-boards">
+      @for (b of (boards$ | async); track b.id) {
+        <li>
+          <button (click)="selecionar(b)">{{ b.nome }}</button>
+        </li>
+      }
+    </ul>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>

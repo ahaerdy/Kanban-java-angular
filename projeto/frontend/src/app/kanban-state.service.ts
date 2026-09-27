@@ -9,8 +9,16 @@ export class KanbanStateService {
   private cardsSubject = new BehaviorSubject<Card[]>([]);
   readonly cards$ = this.cardsSubject.asObservable();
 
+  private boardId: string | null = null;
+
+  selecionarBoard(boardId: string) {
+    this.boardId = boardId;
+    this.carregar();
+  }
+
   carregar() {
-    this.api.listar().subscribe(cards => this.cardsSubject.next(cards));
+    if (!this.boardId) return;
+    this.api.listar(this.boardId).subscribe(cards => this.cardsSubject.next(cards));
   }
 
   mover(id: string, coluna: string) {
@@ -18,7 +26,8 @@ export class KanbanStateService {
   }
 
   criar(titulo: string, coluna: string) {
-    this.api.criar(titulo, coluna).subscribe(() => this.carregar());
+    if (!this.boardId) return;
+    this.api.criar(titulo, coluna, this.boardId).subscribe(() => this.carregar());
   }
 
   editar(edicao: CardEdicao) {

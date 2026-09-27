@@ -19,13 +19,13 @@ public class CardController {
     }
 
     @GetMapping
-    public List<Card> listar() {
-        return service.listarTodos();
+    public List<Card> listar(@RequestParam String boardId) {
+        return service.listarTodos(boardId);
     }
 
     @PostMapping
     public Card criar(@RequestBody CardCreateRequest body) {
-        return service.criar(body.titulo(), body.coluna());
+        return service.criar(body.titulo(), body.coluna(), body.boardId());
     }
 
     @PutMapping("/{id}/coluna")

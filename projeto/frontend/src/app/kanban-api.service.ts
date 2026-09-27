@@ -7,12 +7,12 @@ export class KanbanApiService {
   private http = inject(HttpClient);
   private baseUrl = 'http://localhost:8080/cards';
 
-  listar() {
-    return this.http.get<Card[]>(this.baseUrl);
+  listar(boardId: string) {
+    return this.http.get<Card[]>(`${this.baseUrl}?boardId=${boardId}`);
   }
 
-  criar(titulo: string, coluna: string) {
-    return this.http.post<Card>(this.baseUrl, { titulo, coluna });
+  criar(titulo: string, coluna: string, boardId: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo, coluna, boardId });
   }
 
   mover(id: string, coluna: string) {

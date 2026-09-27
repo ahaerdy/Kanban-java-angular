@@ -17,6 +17,7 @@ public class Card {
     private String titulo;
     private String descricao;
     private long ordem = System.currentTimeMillis();
+    private String boardId;
 
     @Enumerated(EnumType.STRING)
     private ColunaEnum coluna;
@@ -31,10 +32,11 @@ public class Card {
     public Card() {
     }
 
-    public Card(String id, String titulo, ColunaEnum coluna) {
+    public Card(String id, String titulo, ColunaEnum coluna, String boardId) {
         this.id = id;
         this.titulo = titulo;
         this.coluna = coluna;
+        this.boardId = boardId;
     }
 
     public String getId() {
@@ -67,6 +69,14 @@ public class Card {
 
     public void setOrdem(long ordem) {
         this.ordem = ordem;
+    }
+
+    public String getBoardId() {
+        return boardId;
+    }
+
+    public void setBoardId(String boardId) {
+        this.boardId = boardId;
     }
 
     public ColunaEnum getColuna() {

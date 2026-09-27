@@ -19,12 +19,12 @@ public class KanbanService {
         this.repository = repository;
     }
 
-    public List<Card> listarTodos() {
-        return repository.findAll(Sort.by("ordem"));
+    public List<Card> listarTodos(String boardId) {
+        return repository.findByBoardId(boardId, Sort.by("ordem"));
     }
 
-    public Card criar(String titulo, ColunaEnum coluna) {
-        var novo = new Card(UUID.randomUUID().toString(), titulo, coluna);
+    public Card criar(String titulo, ColunaEnum coluna, String boardId) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, coluna, boardId);
         return repository.save(novo);
     }
 

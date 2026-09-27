@@ -1,3 +1,34 @@
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #1f2430;
+  color: #cfd3dc;
+  padding: 1rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .logo { font-size: 1.2rem; font-weight: bold; color: white; padding: 0 1rem 1rem; }
+
+.sidebar .item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 1rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sidebar .item:hover:not(:disabled) { background: #2b3244; }
+.sidebar .item:disabled { color: #6b7280; cursor: default; }
+
+.conteudo { flex: 1; padding: 1rem; }
+
 .board { display: flex; gap: 1rem; padding: 1rem; }
 .column { background: #eee; border-radius: 8px; padding: 1rem; width: 360px; }
 .dropzone { min-height: 80px; }

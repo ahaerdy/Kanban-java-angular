@@ -9,6 +9,7 @@ export interface Card {
   descricao: string | null;
   etiqueta: Etiqueta | null;
   ordem: number;
+  boardId: string;
 }
 
 export interface CardEdicao {

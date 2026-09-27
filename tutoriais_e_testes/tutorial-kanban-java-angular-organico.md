@@ -5424,7 +5424,9 @@ export class App implements OnInit {
   </nav>
 
   <div class="conteudo">
-    <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    <div class="cabecalho-board">
+      <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    </div>
     <app-card-count />
     <div class="board">
       <div class="column">
@@ -5494,24 +5496,28 @@ export class App implements OnInit {
   flex-direction: column;
 }
 
-.sidebar .logo { font-size: 1.2rem; font-weight: bold; color: white; padding: 0 1rem 1rem; }
+.sidebar .logo { font-size: 1.6rem; font-weight: bold; color: white; padding: 0 1.25rem 1.5rem; }
 
 .sidebar .item {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.6rem 1rem;
+  padding: 0.85rem 1.25rem;
   border: none;
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 1.15rem;
   cursor: pointer;
 }
 
 .sidebar .item:hover:not(:disabled) { background: #2b3244; }
-.sidebar .item:disabled { color: #6b7280; cursor: default; }
+.sidebar .item:disabled { color: #8a92a6; cursor: default; }
 
 .conteudo { flex: 1; padding: 1rem; }
+
+.cabecalho-board { background: #e4e6eb; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1rem; }
+.cabecalho-board h1 { margin: 0; font-size: 1.6rem; }
 
 .board { display: flex; gap: 1rem; padding: 1rem; }
 .column { background: #eee; border-radius: 8px; padding: 1rem; width: 360px; }
@@ -5534,6 +5540,7 @@ Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `card-i
 - `App.ngOnInit` conecta os dois serviços: assina `boards.boardAtual$`, e a cada emissão (a seleção inicial automática, uma seleção manual pelo modal, ou a criação de um novo painel) chama `state.selecionarBoard(board.id)`, que dispara `carregar()` internamente. O `<h1>` do template passou a exibir `(boardAtual$ | async)?.nome`, então o nome do painel selecionado aparece automaticamente no topo da página, sem nenhuma lógica adicional em `App`.
 - `BoardSelectorModalComponent` segue a mesma arquitetura de `CardEditModalComponent` (Parte 17/18): um `@Output()` (`fechar`) devolve o controle para quem o abriu, sem decidir nada por conta própria. Diferente do modal de edição de card, este não precisa ser arrastável nem redimensionável — nada no pedido original exigia isso —, e por isso não reaproveita nenhum código daquele componente; são dois modais independentes, cada um do tamanho do problema que resolve.
 - A barra lateral foi escrita diretamente em `app.html`, sem virar um `SidebarComponent` à parte. Nada mais no projeto precisa reutilizá-la — ela existe em um único lugar —, e criar um componente novo só para isolar um pedaço de template usado uma única vez teria sido exatamente o tipo de abstração prematura que este tutorial, desde o paralelo com o Sudoku na Parte 0, tenta evitar. Três dos quatro itens da barra (`Etiquetas`, `Config.`, `Ajuda`) são botões `disabled`, sem nenhum `(click)` — presentes na tela, como a captura de tela de referência pedia, mas conscientemente inertes, porque nenhuma funcionalidade por trás deles foi especificada.
+- Os tamanhos de fonte da barra lateral (`.sidebar .logo`, `.sidebar .item`) foram ajustados depois de uma primeira captura de tela real, que revelou texto pequeno demais para o contraste do fundo escuro — um lembrete de que julgar CSS só pela leitura do código, sem ver o resultado renderizado, tem limite. `.cabecalho-board`, uma faixa cinza-clara ao redor do `<h1>`, dá ao nome do painel selecionado o destaque visual que a Parte 21 original não tinha, inspirado na referência do Gemini anexada pelo usuário, mas deliberadamente sem os demais elementos daquela referência (busca, notificações, avatar) — nenhum deles foi pedido.
 
 ### Glossário
 
