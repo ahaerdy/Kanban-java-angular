@@ -72,6 +72,8 @@ Repositório criado. Registro da próxima entrada previsto para a primeira execu
   <img src="000-Midia_e_Anexos/2026-09-19-09-42-20.png" alt="" width="1024">
 </p>
 
+![snake gif](https://github.com/ahaerdy/kanban-java-github/blob/output/github-contribution-grid-snake.svg)
+
 ---
 
 ## Parte 0: Exibição Inicial da Página

@@ -5569,8 +5569,6 @@ Uma decisão importante de reaproveitamento: para o arraste, em vez de introduzi
 
 `src/main/java/com/github/ahaerdy/backend/web/BoardController.java` — substitua todo o conteúdo (novo endpoint `PUT /boards/{id}`, reaproveitando `BoardCreateRequest` como corpo — a forma do corpo, `{ "nome": "..." }`, é idêntica entre criar e renomear, então um segundo `record` só para isso não pareceu justificado):
 
-`src/main/java/com/github/ahaerdy/backend/web/BoardController.java`:
-
 ```java
 package com.github.ahaerdy.backend.web;
 
@@ -5609,8 +5607,6 @@ public class BoardController {
 ```
 
 `src/main/java/com/github/ahaerdy/backend/service/BoardService.java` — substitua todo o conteúdo:
-
-`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
 
 ```java
 package com.github.ahaerdy.backend.service;
@@ -5674,8 +5670,6 @@ public class BoardService {
 
 `src/app/board-api.service.ts` — substitua todo o conteúdo:
 
-`src/app/board-api.service.ts`:
-
 ```typescript
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
@@ -5701,8 +5695,6 @@ export class BoardApiService {
 ```
 
 `src/app/board-state.service.ts` — substitua todo o conteúdo:
-
-`src/app/board-state.service.ts`:
 
 ```typescript
 import { Injectable, inject } from '@angular/core';
@@ -5755,8 +5747,6 @@ export class BoardStateService {
 ```
 
 `src/app/board-selector-modal/board-selector-modal.ts` — substitua todo o conteúdo:
-
-`src/app/board-selector-modal/board-selector-modal.ts`:
 
 ```typescript
 import { Component, ElementRef, EventEmitter, HostListener, OnInit, Output, ViewChild, inject } from '@angular/core';
@@ -5865,8 +5855,6 @@ export class BoardSelectorModalComponent implements OnInit {
 
 `src/app/board-selector-modal/board-selector-modal.html` — substitua todo o conteúdo:
 
-`src/app/board-selector-modal/board-selector-modal.html`:
-
 ```html
 <div class="backdrop">
   <div class="modal" #modalRef>
@@ -5882,8 +5870,10 @@ export class BoardSelectorModalComponent implements OnInit {
     @if (renomeando) {
       <div class="renomear">
         <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
-        <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
-        <button (click)="renomeando = false">Cancelar</button>
+        <div class="acoes-renomear">
+          <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+          <button (click)="renomeando = false">Cancelar</button>
+        </div>
       </div>
     }
 
@@ -5906,8 +5896,6 @@ export class BoardSelectorModalComponent implements OnInit {
 
 `src/app/board-selector-modal/board-selector-modal.scss` — substitua todo o conteúdo:
 
-`src/app/board-selector-modal/board-selector-modal.scss`:
-
 ```scss
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
@@ -5916,16 +5904,88 @@ export class BoardSelectorModalComponent implements OnInit {
 .modal select { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
 .acoes-board { display: flex; gap: 0.5rem; }
 .acoes-board button { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
-.renomear { display: flex; gap: 0.5rem; }
-.renomear input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.renomear { display: flex; flex-direction: column; gap: 0.5rem; }
+.renomear input { padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-renomear { display: flex; gap: 0.5rem; }
+.acoes-renomear button { flex: 1; padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
 .novo-board { display: flex; gap: 0.5rem; }
 .novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
-.novo-board button, .acoes button, .renomear button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
 .acoes { display: flex; justify-content: flex-end; }
 ```
 
 
-Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.ts`/`app.html` (Parte 21) não mudam: `App` continua só abrindo e fechando o modal (`seletorDeBoardsAberto`), sem precisar saber nada sobre como ele exibe ou manipula a lista de painéis internamente.
+`src/app/app.html` — substitua todo o conteúdo (duas mudanças pontuais em relação à Parte 21: o nome do aplicativo na barra lateral, e a linha do contador de cards comentada):
+
+```html
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo">🗃️KBoard</div>
+    <button class="item" (click)="abrirSeletorDeBoards()">Painéis</button>
+    <button class="item" disabled>Etiquetas</button>
+    <button class="item" disabled>Config.</button>
+    <button class="item" disabled>Ajuda</button>
+  </nav>
+
+  <div class="conteudo">
+    <div class="cabecalho-board">
+      <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    </div>
+    <!-- <app-card-count /> -->
+    <div class="board">
+      <div class="column">
+        <h2>A Fazer</h2>
+        <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+             id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of aFazer; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloAFazer placeholder="Nova tarefa" />
+          <button (click)="adicionar('aFazer', novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Em Andamento</h2>
+        <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+             id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of emAndamento; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+          <button (click)="adicionar('emAndamento', novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Concluído</h2>
+        <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+             id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of concluido; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloConcluido placeholder="Nova tarefa" />
+          <button (click)="adicionar('concluido', novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}
+
+@if (seletorDeBoardsAberto) {
+  <app-board-selector-modal (fechar)="fecharSeletorDeBoards()" />
+}
+```
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.ts`, `app.scss` e `board-selector-modal.ts` não mudam: as três correções desta parte são inteiramente de marcação e estilo, sem nenhuma alteração de lógica.
 
 ### Explicando
 
@@ -5935,6 +5995,7 @@ Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.ts
 - `BoardStateService.renomear` não recarrega a lista inteira do backend (diferente do padrão `carregar()` usado em `KanbanStateService`): como a resposta do `PUT` não traz o painel atualizado, e o único dado que muda é o nome (já conhecido, pois foi o usuário quem o digitou), a lista local é atualizada diretamente com `.map(...)`, evitando uma segunda chamada de rede só para buscar de volta um dado que já se tinha em mãos.
 - "Abrir" é o único ponto em que o modal chama `BoardStateService.selecionar`, trocando de fato o painel ativo do board — e só então fecha o modal (`fechar.emit()`). Escolher um painel no `<select>` ou renomeá-lo não fecha nada, nem troca o board exibido, até "Abrir" ser clicado.
 - O controlador de arraste é uma cópia funcional do já usado em `CardEditModalComponent`: `iniciarArraste` tira o modal do fluxo centralizado do flexbox do `.backdrop` e registra a posição inicial; `@HostListener('document:mousemove')`/`@HostListener('document:mouseup')` atualizam a posição e encerram o arraste. `evento.stopPropagation()` permanece por precaução, mas, como discutido acima, este modal não tem nenhum ancestral com `cdkDrag` — ao contrário do que acontecia com o card antes da Parte 18.
+- Três ajustes visuais, encontrados ao testar esta parte, completam a entrega: o botão "Cancelar" do formulário de renomeio ultrapassava a borda direita do modal, porque `.renomear` colocava campo de texto e dois botões lado a lado em uma única linha flexível de largura fixa (320px), sem espaço suficiente para os três. A correção separa o campo de texto (em sua própria linha, ocupando a largura inteira) dos dois botões (em uma segunda linha, abaixo, dividindo o espaço igualmente) — o mesmo tipo de ajuste que só um teste visual real, e não a leitura do código, costuma revelar. O nome do aplicativo, na barra lateral, mudou de "Kanban" para "🗃️KBoard". E a linha do contador de cards (`<app-card-count />`, da Parte 15) foi comentada, não removida — `<!-- <app-card-count /> -->` continua no HTML, documentando que o componente segue existindo e funcional, só temporariamente fora de exibição.
 
 ### Glossário
 
@@ -5946,6 +6007,8 @@ Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.ts
 ### 🧪 Teste rápido
 
 Abra o modal "Painéis" com pelo menos dois painéis já criados. Confirme que a caixa de seleção mostra o painel atualmente aberto. Escolha outro painel na caixa, clique em "Renomear", altere o nome e confirme: o nome deve mudar na caixa de seleção, mas o quadro por trás do modal não deve mudar (o painel renomeado não era o que estava aberto). Feche o modal sem clicar em "Abrir", e confirme que o board continua no painel original. Reabra o modal, escolha o painel renomeado, e clique em "Abrir": o modal deve fechar, e o `<h1>` do topo da página deve mostrar o novo nome. Por fim, arraste o modal pelo cabeçalho antes de fechá-lo, e confirme que ele se move como um único elemento, sem nenhuma duplicata.
+
+Confirme também os três ajustes visuais: o botão "Cancelar" do formulário de renomeio deve ficar inteiramente dentro do modal, numa linha abaixo do campo de texto; a barra lateral deve mostrar "🗃️KBoard" no lugar de "Kanban"; e a linha "X cards no total" não deve mais aparecer acima do quadro.
 
 ---
 

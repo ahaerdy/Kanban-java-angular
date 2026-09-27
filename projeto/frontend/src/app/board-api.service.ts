@@ -14,4 +14,8 @@ export class BoardApiService {
   criar(nome: string) {
     return this.http.post<Board>(this.baseUrl, { nome });
   }
+
+  renomear(id: string, nome: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { nome });
+  }
 }

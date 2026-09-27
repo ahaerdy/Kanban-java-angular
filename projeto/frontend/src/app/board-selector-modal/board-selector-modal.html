@@ -1,14 +1,26 @@
 <div class="backdrop">
-  <div class="modal">
-    <div class="cabecalho-modal">Painéis</div>
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Painéis</div>
 
-    <ul class="lista-boards">
-      @for (b of (boards$ | async); track b.id) {
-        <li>
-          <button (click)="selecionar(b)">{{ b.nome }}</button>
-        </li>
+    <label>Painel</label>
+    <select #selectBoard (change)="selecionarNaLista(selectBoard.value)">
+      @for (b of todosBoards; track b.id) {
+        <option [value]="b.id" [selected]="b.id === boardSelecionadoId">{{ b.nome }}</option>
       }
-    </ul>
+    </select>
+
+    @if (renomeando) {
+      <div class="renomear">
+        <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
+        <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+        <button (click)="renomeando = false">Cancelar</button>
+      </div>
+    }
+
+    <div class="acoes-board">
+      <button (click)="iniciarRenomeio()">Renomear</button>
+      <button (click)="abrir()">Abrir</button>
+    </div>
 
     <div class="novo-board">
       <input #nomeNovoBoard placeholder="Nome do novo painel" />

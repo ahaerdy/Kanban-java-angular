@@ -1,11 +1,13 @@
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
-.cabecalho-modal { font-weight: bold; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
-.lista-boards { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; }
-.lista-boards li { margin-bottom: 4px; }
-.lista-boards button { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; background: #fafafa; cursor: pointer; }
-.lista-boards button:hover { background: #eef2ff; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.modal label { font-size: 0.8rem; color: #555; }
+.modal select { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-board { display: flex; gap: 0.5rem; }
+.acoes-board button { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.renomear { display: flex; gap: 0.5rem; }
+.renomear input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
 .novo-board { display: flex; gap: 0.5rem; }
 .novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
-.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.novo-board button, .acoes button, .renomear button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
 .acoes { display: flex; justify-content: flex-end; }

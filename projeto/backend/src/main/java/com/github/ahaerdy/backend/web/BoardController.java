@@ -26,4 +26,9 @@ public class BoardController {
     public Board criar(@RequestBody BoardCreateRequest body) {
         return service.criar(body.nome());
     }
+
+    @PutMapping("/{id}")
+    public void renomear(@PathVariable String id, @RequestBody BoardCreateRequest body) {
+        service.renomear(id, body.nome());
+    }
 }

@@ -32,4 +32,16 @@ export class BoardStateService {
       this.selecionar(novo);
     });
   }
+
+  renomear(id: string, novoNome: string) {
+    this.api.renomear(id, novoNome).subscribe(() => {
+      const atualizados = this.boardsSubject.value.map(b => (b.id === id ? { ...b, nome: novoNome } : b));
+      this.boardsSubject.next(atualizados);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next({ ...atual, nome: novoNome });
+      }
+    });
+  }
 }

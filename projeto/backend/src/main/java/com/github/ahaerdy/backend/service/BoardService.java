@@ -44,4 +44,11 @@ public class BoardService {
         var novo = new Board(UUID.randomUUID().toString(), nome);
         return boardRepository.save(novo);
     }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
 }
