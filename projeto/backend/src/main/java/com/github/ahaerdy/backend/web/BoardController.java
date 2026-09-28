@@ -31,4 +31,9 @@ public class BoardController {
     public void renomear(@PathVariable String id, @RequestBody BoardCreateRequest body) {
         service.renomear(id, body.nome());
     }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
 }

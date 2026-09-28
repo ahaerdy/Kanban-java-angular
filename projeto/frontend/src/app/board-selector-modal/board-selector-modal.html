@@ -19,10 +19,22 @@
       </div>
     }
 
+    @if (confirmandoExclusao) {
+      <div class="confirmar-exclusao">
+        <p>Excluir "{{ boardSelecionado?.nome }}"? Os cards deste painel também serão apagados.</p>
+        <div class="acoes-confirmar">
+          <button class="perigo" (click)="confirmarExclusao()">Excluir</button>
+          <button (click)="confirmandoExclusao = false">Cancelar</button>
+        </div>
+      </div>
+    }
+
     <div class="acoes-board">
       <button (click)="iniciarRenomeio()">Renomear</button>
       <button (click)="abrir()">Abrir</button>
     </div>
+
+    <button class="excluir-board" (click)="iniciarExclusao()">Excluir Painel</button>
 
     <div class="novo-board">
       <input #nomeNovoBoard placeholder="Nome do novo painel" />

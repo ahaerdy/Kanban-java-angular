@@ -11,4 +11,6 @@ public interface CardRepository extends JpaRepository<Card, String> {
     List<Card> findByBoardId(String boardId, Sort sort);
 
     List<Card> findByBoardIdIsNull();
+
+    void deleteByBoardId(String boardId);
 }

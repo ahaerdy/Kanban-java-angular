@@ -51,4 +51,9 @@ public class BoardService {
             boardRepository.save(b);
         });
     }
+
+    public void excluir(String id) {
+        cardRepository.deleteByBoardId(id);
+        boardRepository.deleteById(id);
+    }
 }

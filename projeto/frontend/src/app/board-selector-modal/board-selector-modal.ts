@@ -17,6 +17,7 @@ export class BoardSelectorModalComponent implements OnInit {
   todosBoards: Board[] = [];
   boardSelecionadoId = '';
   renomeando = false;
+  confirmandoExclusao = false;
 
   private arrastando = false;
   private offsetX = 0;
@@ -25,8 +26,9 @@ export class BoardSelectorModalComponent implements OnInit {
   ngOnInit() {
     this.boards.boards$.subscribe(boards => {
       this.todosBoards = boards;
-      if (!this.boardSelecionadoId && boards.length > 0) {
-        this.boardSelecionadoId = boards[0].id;
+      const aindaExiste = boards.some(b => b.id === this.boardSelecionadoId);
+      if (!aindaExiste) {
+        this.boardSelecionadoId = boards.length > 0 ? boards[0].id : '';
       }
     });
     this.boards.boardAtual$.subscribe(atual => {
@@ -43,11 +45,13 @@ export class BoardSelectorModalComponent implements OnInit {
   selecionarNaLista(id: string) {
     this.boardSelecionadoId = id;
     this.renomeando = false;
+    this.confirmandoExclusao = false;
   }
 
   iniciarRenomeio() {
     if (this.boardSelecionado) {
       this.renomeando = true;
+      this.confirmandoExclusao = false;
     }
   }
 
@@ -56,6 +60,19 @@ export class BoardSelectorModalComponent implements OnInit {
     if (!limpo || !this.boardSelecionado) return;
     this.boards.renomear(this.boardSelecionado.id, limpo);
     this.renomeando = false;
+  }
+
+  iniciarExclusao() {
+    if (this.boardSelecionado) {
+      this.confirmandoExclusao = true;
+      this.renomeando = false;
+    }
+  }
+
+  confirmarExclusao() {
+    if (!this.boardSelecionado) return;
+    this.boards.excluir(this.boardSelecionado.id);
+    this.confirmandoExclusao = false;
   }
 
   abrir() {

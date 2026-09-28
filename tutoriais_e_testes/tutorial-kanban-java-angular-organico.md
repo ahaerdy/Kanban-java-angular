@@ -6479,6 +6479,113 @@ Com pelo menos dois painéis, abra "Painéis", escolha um painel diferente do ab
 
 ---
 
+## Parte 24 — Corrigindo a Exclusão de Painéis com Cards
+
+### A mentalidade desta parte
+
+Ao testar a Parte 23, excluir um painel vazio funcionou, mas excluir um painel com cards falhou com `500 Internal Server Error`. O padrão — vazio funciona, com conteúdo não — é o tipo de pista que aponta direto para a causa, e o log do backend (não apenas a resposta HTTP, que só trazia "Internal Server Error" sem detalhe) confirmou exatamente o quê: uma exceção de transação, disparada só quando havia algo de fato para remover.
+
+### O diagnóstico
+
+```
+jakarta.persistence.TransactionRequiredException: No EntityManager with actual
+transaction available for current thread - cannot reliably process 'remove' call
+	...
+	at jdk.proxy2/jdk.proxy2.$Proxy125.deleteByBoardId(Unknown Source)
+	at com.github.ahaerdy.backend.service.BoardService.excluir(BoardService.java:56)
+```
+
+Os métodos herdados de `JpaRepository` (`save`, `deleteById`, `findAll`, etc.) já vêm com uma transação própria, gerenciada automaticamente pelo Spring Data, em cada chamada. `deleteByBoardId`, porém, é uma consulta derivada *personalizada*, criada na Parte 23 — e uma consulta derivada de exclusão, que remove mais de uma entidade, não recebe essa transação automaticamente: o Spring Data espera que quem chama o método já esteja dentro de um contexto transacional, e `BoardService.excluir` não estava.
+
+Isso explica com precisão o comportamento observado: `deleteByBoardId`, chamado para um painel sem nenhum card, encontra uma lista vazia e nunca chega a executar nenhum `remove()` — nada dá errado, porque nada foi de fato tentado. Chamado para um painel com cards, a primeira tentativa real de remover uma entidade expõe a ausência de transação, e a exceção interrompe a operação inteira — inclusive a exclusão do próprio painel, que nunca chega a acontecer, já que `cardRepository.deleteByBoardId(id)` lança a exceção antes da linha seguinte (`boardRepository.deleteById(id)`) ser executada.
+
+### Arquivo alterado
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
+
+    @Transactional
+    public void excluir(String id) {
+        cardRepository.deleteByBoardId(id);
+        boardRepository.deleteById(id);
+    }
+}
+```
+
+### Explicando
+
+- `@Transactional`, do pacote `org.springframework.transaction.annotation`, abre uma transação antes do método começar a executar e a confirma (*commit*) quando ele termina com sucesso — ou a desfaz (*rollback*) se qualquer exceção for lançada no meio do caminho. Aplicada a `excluir`, ela cobre as duas chamadas ao repositório (`deleteByBoardId` e `deleteById`) na mesma transação.
+- Um efeito colateral bem-vindo, além de corrigir o erro: a exclusão do painel e a exclusão em cascata dos seus cards passam a ser uma operação atômica. Antes desta correção, mesmo sem o erro de transação, um cenário como "os cards foram excluídos, mas o painel não" (por alguma outra falha entre as duas linhas) seria tecnicamente possível; com `@Transactional`, ou as duas exclusões acontecem juntas, ou nenhuma delas é persistida.
+- Vale notar por que os outros métodos de `BoardService` (`criar`, `renomear`) nunca precisaram dessa anotação: cada um faz só uma escrita (`boardRepository.save(...)`), e `save`, sendo um método padrão de `JpaRepository`, já é transacional por conta própria — não há uma segunda operação para agrupar na mesma transação. `excluir` é o primeiro método deste serviço a combinar duas escritas distintas em sequência, e foi exatamente aí que a ausência de uma transação explícita se tornou visível.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@Transactional`** | Anotação do Spring que agrupa as operações de um método em uma única transação de banco de dados: todas são persistidas juntas ao final (*commit*), ou nenhuma é, se uma exceção interromper o método (*rollback*). |
+| **`EntityManager`** | Objeto do JPA que gerencia o ciclo de vida das entidades e a comunicação com o banco de dados dentro de uma transação; a exceção desta parte ocorre porque nenhum `EntityManager` transacional estava disponível no momento da chamada. |
+
+### 🧪 Teste rápido
+
+Com um painel que tenha pelo menos um card, abra "Painéis", selecione-o, clique em "Excluir Painel" e confirme: o painel deve sumir da caixa de seleção, sem erro no console nem na aba Network. Confirme também, direto no banco (ou recarregando qualquer outro painel), que os cards daquele painel excluído não aparecem em lugar nenhum.
+
+---
+
 ## Encerrando o projeto: por que paramos aqui
 
-Com a Parte 23, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, selecionáveis, renomeáveis e excluíveis (com confirmação) por um modal arrastável, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por outro modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; a Parte 21, a maior extração de domínio desde a Parte 10, resolvida com uma migração automática dos dados já existentes; a Parte 22, um lembrete de que reaproveitar um mecanismo já testado pode ser mais simples do que reintroduzir uma biblioteca só porque ela "deveria" funcionar; e a Parte 23, uma escolha explícita entre duas formas válidas de pedir confirmação para uma ação destrutiva — inline no mesmo modal, em vez de um segundo modal por cima do primeiro —, justificada pelo tamanho real do problema, não por hábito. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
+Com a Parte 24, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, selecionáveis, renomeáveis e excluíveis (com confirmação e exclusão em cascata correta) por um modal arrastável, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por outro modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; a Parte 21, a maior extração de domínio desde a Parte 10, resolvida com uma migração automática dos dados já existentes; a Parte 22, um lembrete de que reaproveitar um mecanismo já testado pode ser mais simples do que reintroduzir uma biblioteca só porque ela "deveria" funcionar; a Parte 23, uma escolha explícita entre duas formas válidas de pedir confirmação para uma ação destrutiva; e a Parte 24, um lembrete de que nem todo método de um repositório Spring Data herda transação de graça — consultas derivadas personalizadas, sobretudo as que removem mais de uma entidade, podem exigir `@Transactional` explícito, e só um teste com dados de verdade (não um caso vazio) revela essa lacuna. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.

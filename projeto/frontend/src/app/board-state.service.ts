@@ -44,4 +44,16 @@ export class BoardStateService {
       }
     });
   }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => {
+      const restantes = this.boardsSubject.value.filter(b => b.id !== id);
+      this.boardsSubject.next(restantes);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next(restantes.length > 0 ? restantes[0] : null);
+      }
+    });
+  }
 }

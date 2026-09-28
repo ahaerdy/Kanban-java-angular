@@ -18,4 +18,8 @@ export class BoardApiService {
   renomear(id: string, nome: string) {
     return this.http.put<void>(`${this.baseUrl}/${id}`, { nome });
   }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
 }
