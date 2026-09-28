@@ -12,8 +12,10 @@
     @if (renomeando) {
       <div class="renomear">
         <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
-        <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
-        <button (click)="renomeando = false">Cancelar</button>
+        <div class="acoes-renomear">
+          <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+          <button (click)="renomeando = false">Cancelar</button>
+        </div>
       </div>
     }
 

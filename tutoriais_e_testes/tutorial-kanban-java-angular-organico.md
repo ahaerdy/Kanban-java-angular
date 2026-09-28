@@ -4258,9 +4258,9 @@ Nenhuma dessas decisões é definitiva. Como no Sudoku, se uma necessidade real 
 
 ### Estado final do projeto
 
-- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board e a barra lateral, consumindo `KanbanStateService` e `BoardStateService`), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `BoardSelectorModalComponent` (seleção, criação e renomeio de painéis por uma caixa de seleção, arrastável), `KanbanApiService`/`KanbanStateService` (estado dos cards do painel selecionado), `BoardApiService`/`BoardStateService` (estado da lista de painéis e do painel selecionado), `CardCountComponent` (segundo consumidor real do estado compartilhado de cards).
-- **Backend Spring Boot**: `CardController`/`BoardController` (rotas HTTP), `KanbanService`/`BoardService` (regras de negócio), `CardRepository`/`BoardRepository` (persistência via Spring Data JPA), `Card`/`Board`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest`/`ReordenarRequest`/`CardCreateRequest`/`BoardCreateRequest` (domínio e contratos de API).
-- **Múltiplos painéis nomeados**, cada um com suas próprias três colunas fixas e seus próprios cards, com migração automática dos cards já existentes para um painel padrão na primeira inicialização após esta parte.
+- **Frontend Angular** (componentes standalone, o padrão desta versão do CLI): `App` (orquestra o board e a barra lateral, consumindo `KanbanStateService` e `BoardStateService`), `CardItemComponent` (renderiza um card e avisa a intenção de editar), `CardEditModalComponent` (edição de título, descrição e etiqueta, arrastável e redimensionável), `BoardSelectorModalComponent` (seleção, criação, renomeio e exclusão — com confirmação — de painéis por uma caixa de seleção, arrastável), `KanbanApiService`/`KanbanStateService` (estado dos cards do painel selecionado), `BoardApiService`/`BoardStateService` (estado da lista de painéis e do painel selecionado), `CardCountComponent` (segundo consumidor real do estado compartilhado de cards).
+- **Backend Spring Boot**: `CardController`/`BoardController` (rotas HTTP), `KanbanService`/`BoardService` (regras de negócio, incluindo exclusão em cascata de cards ao excluir um painel), `CardRepository`/`BoardRepository` (persistência via Spring Data JPA), `Card`/`Board`/`ColunaEnum`/`Etiqueta`/`ColunaRequest`/`CardEditRequest`/`EtiquetaRequest`/`ReordenarRequest`/`CardCreateRequest`/`BoardCreateRequest` (domínio e contratos de API).
+- **Múltiplos painéis nomeados, criáveis, renomeáveis e excluíveis (com confirmação)**, cada um com suas próprias três colunas fixas e seus próprios cards, com migração automática dos cards já existentes para um painel padrão na primeira inicialização após a Parte 21, e exclusão em cascata dos cards de um painel removido.
 - **Edição completa de um card** (título, descrição e etiqueta livre, com nome e cor digitados pelo usuário) por um modal arrastável e redimensionável, sem excluir e recriar o card.
 - **Persistência real** em MySQL, rodando em um container Docker (`docker-compose.yml`), com os dados guardados em um volume Docker, sobrevivendo a reinícios do backend, do container e do próprio banco.
 - **Arrastar-e-soltar** funcional entre as três colunas fixas, com a coluna e a posição relativa dentro de cada coluna, ambas persistidas.
@@ -5538,7 +5538,9 @@ Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `card-i
 - `KanbanStateService` passou a guardar internamente qual painel está selecionado (`private boardId: string | null`), em vez de exigir esse dado a cada chamada de método. `selecionarBoard(boardId)` é o único ponto de entrada que define esse valor — chamado por `App` sempre que `BoardStateService.boardAtual$` emite um novo painel — e todos os demais métodos (`carregar`, `criar`) o leem internamente. Essa decisão evitou espalhar `boardId` como parâmetro por `mover`, `editar`, `reordenar` e `excluir`, que não precisam dele (operam sobre um card já identificado pelo seu próprio `id`).
 - `BoardStateService` segue exatamente o mesmo molde de `KanbanStateService`: um `BehaviorSubject` para a lista de painéis (`boards$`) e outro para o painel atualmente selecionado (`boardAtual$`). `carregarBoards()`, ao terminar de buscar a lista, seleciona automaticamente o primeiro painel caso nenhum já estivesse selecionado (`!this.boardAtualSubject.value`) — o que garante que, na carga inicial da página, algum painel sempre acaba escolhido, sem exigir nenhuma ação do usuário.
 - `App.ngOnInit` conecta os dois serviços: assina `boards.boardAtual$`, e a cada emissão (a seleção inicial automática, uma seleção manual pelo modal, ou a criação de um novo painel) chama `state.selecionarBoard(board.id)`, que dispara `carregar()` internamente. O `<h1>` do template passou a exibir `(boardAtual$ | async)?.nome`, então o nome do painel selecionado aparece automaticamente no topo da página, sem nenhuma lógica adicional em `App`.
-- `BoardSelectorModalComponent` segue a mesma arquitetura de `CardEditModalComponent` (Parte 17/18): um `@Output()` (`fechar`) devolve o controle para quem o abriu, sem decidir nada por conta própria. Diferente do modal de edição de card, este não precisa ser arrastável nem redimensionável — nada no pedido original exigia isso —, e por isso não reaproveita nenhum código daquele componente; são dois modais independentes, cada um do tamanho do problema que resolve.
+- `BoardSelectorModalComponent` segue a mesma arquitetura de `CardEditModalComponent` (Parte 17/18): um `@Output()` (`fechar`) devolve o controle para quem o abriu, sem decidir nada por conta própria. Diferente do modal de edição de card, este não precisa ser redimensionável — nada no pedido original exigia isso.
+
+  *(Nota: esta parte também dizia que o modal não precisava ser arrastável; a Parte 22 reverteu essa afirmação, quando um pedido posterior passou a exigir isso.)*
 - A barra lateral foi escrita diretamente em `app.html`, sem virar um `SidebarComponent` à parte. Nada mais no projeto precisa reutilizá-la — ela existe em um único lugar —, e criar um componente novo só para isolar um pedaço de template usado uma única vez teria sido exatamente o tipo de abstração prematura que este tutorial, desde o paralelo com o Sudoku na Parte 0, tenta evitar. Três dos quatro itens da barra (`Etiquetas`, `Config.`, `Ajuda`) são botões `disabled`, sem nenhum `(click)` — presentes na tela, como a captura de tela de referência pedia, mas conscientemente inertes, porque nenhuma funcionalidade por trás deles foi especificada.
 - Os tamanhos de fonte da barra lateral (`.sidebar .logo`, `.sidebar .item`) foram ajustados depois de uma primeira captura de tela real, que revelou texto pequeno demais para o contraste do fundo escuro — um lembrete de que julgar CSS só pela leitura do código, sem ver o resultado renderizado, tem limite. `.cabecalho-board`, uma faixa cinza-clara ao redor do `<h1>`, dá ao nome do painel selecionado o destaque visual que a Parte 21 original não tinha, inspirado na referência do Gemini anexada pelo usuário, mas deliberadamente sem os demais elementos daquela referência (busca, notificações, avatar) — nenhum deles foi pedido.
 
@@ -6012,6 +6014,471 @@ Confirme também os três ajustes visuais: o botão "Cancelar" do formulário de
 
 ---
 
+## Parte 23 — Excluindo um Painel, com Confirmação
+
+### A mentalidade desta parte
+
+Falta uma peça óbvia no ciclo de vida de um painel: criar e renomear já existem desde a Parte 21/22, mas não excluir. Diferente de excluir um card (Parte 7, sempre imediato, sem confirmação — a perda é pequena e reversível o bastante criando outro card na hora), excluir um painel apaga também todos os cards dentro dele: um erro aqui é caro. A confirmação pedida faz sentido, e a primeira decisão de design é onde colocá-la.
+
+**A confirmação fica no mesmo modal, não em um modal separado.** O modal de painéis já resolve exatamente esse tipo de situação para "Renomear": um clique revela um formulário inline (`renomeando`), sem fechar o modal nem abrir outro por cima. Um segundo modal de confirmação precisaria replicar toda a mecânica já existente — `backdrop`, arraste, `@ViewChild`, os `@HostListener` de mouse — só para perguntar "tem certeza?", além de introduzir uma sobreposição de modal-sobre-modal (dois `z-index: 1000`, dois `backdrop`) sem necessidade real. Uma seção inline, com fundo destacado em vermelho claro e os botões "Excluir"/"Cancelar", comunica o mesmo risco com uma fração do código.
+
+### Arquivos alterados no backend
+
+`src/main/java/com/github/ahaerdy/backend/repository/CardRepository.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.repository;
+
+import com.github.ahaerdy.backend.model.Card;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface CardRepository extends JpaRepository<Card, String> {
+
+    List<Card> findByBoardId(String boardId, Sort sort);
+
+    List<Card> findByBoardIdIsNull();
+
+    void deleteByBoardId(String boardId);
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
+
+    public void excluir(String id) {
+        cardRepository.deleteByBoardId(id);
+        boardRepository.deleteById(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java` — substitua todo o conteúdo:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.service.BoardService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/boards")
+public class BoardController {
+
+    private final BoardService service;
+
+    public BoardController(BoardService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Board> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Board criar(@RequestBody BoardCreateRequest body) {
+        return service.criar(body.nome());
+    }
+
+    @PutMapping("/{id}")
+    public void renomear(@PathVariable String id, @RequestBody BoardCreateRequest body) {
+        service.renomear(id, body.nome());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+
+### Arquivos alterados no frontend
+
+`src/app/board-api.service.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/boards';
+
+  listar() {
+    return this.http.get<Board[]>(this.baseUrl);
+  }
+
+  criar(nome: string) {
+    return this.http.post<Board>(this.baseUrl, { nome });
+  }
+
+  renomear(id: string, nome: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { nome });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/board-state.service.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { BoardApiService } from './board-api.service';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardStateService {
+  private api = inject(BoardApiService);
+
+  private boardsSubject = new BehaviorSubject<Board[]>([]);
+  readonly boards$ = this.boardsSubject.asObservable();
+
+  private boardAtualSubject = new BehaviorSubject<Board | null>(null);
+  readonly boardAtual$ = this.boardAtualSubject.asObservable();
+
+  carregarBoards() {
+    this.api.listar().subscribe(boards => {
+      this.boardsSubject.next(boards);
+      if (!this.boardAtualSubject.value && boards.length > 0) {
+        this.selecionar(boards[0]);
+      }
+    });
+  }
+
+  selecionar(board: Board) {
+    this.boardAtualSubject.next(board);
+  }
+
+  criar(nome: string) {
+    this.api.criar(nome).subscribe(novo => {
+      this.boardsSubject.next([...this.boardsSubject.value, novo]);
+      this.selecionar(novo);
+    });
+  }
+
+  renomear(id: string, novoNome: string) {
+    this.api.renomear(id, novoNome).subscribe(() => {
+      const atualizados = this.boardsSubject.value.map(b => (b.id === id ? { ...b, nome: novoNome } : b));
+      this.boardsSubject.next(atualizados);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next({ ...atual, nome: novoNome });
+      }
+    });
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => {
+      const restantes = this.boardsSubject.value.filter(b => b.id !== id);
+      this.boardsSubject.next(restantes);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next(restantes.length > 0 ? restantes[0] : null);
+      }
+    });
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.ts` — substitua todo o conteúdo:
+
+```typescript
+import { Component, ElementRef, EventEmitter, HostListener, OnInit, Output, ViewChild, inject } from '@angular/core';
+import { BoardStateService } from '../board-state.service';
+import { Board } from '../models/board';
+
+@Component({
+  imports: [],
+  selector: 'app-board-selector-modal',
+  styleUrl: './board-selector-modal.scss',
+  templateUrl: './board-selector-modal.html',
+})
+export class BoardSelectorModalComponent implements OnInit {
+  private boards = inject(BoardStateService);
+  @Output() fechar = new EventEmitter<void>();
+
+  @ViewChild('modalRef') modalRef!: ElementRef<HTMLDivElement>;
+
+  todosBoards: Board[] = [];
+  boardSelecionadoId = '';
+  renomeando = false;
+  confirmandoExclusao = false;
+
+  private arrastando = false;
+  private offsetX = 0;
+  private offsetY = 0;
+
+  ngOnInit() {
+    this.boards.boards$.subscribe(boards => {
+      this.todosBoards = boards;
+      const aindaExiste = boards.some(b => b.id === this.boardSelecionadoId);
+      if (!aindaExiste) {
+        this.boardSelecionadoId = boards.length > 0 ? boards[0].id : '';
+      }
+    });
+    this.boards.boardAtual$.subscribe(atual => {
+      if (atual) {
+        this.boardSelecionadoId = atual.id;
+      }
+    });
+  }
+
+  get boardSelecionado(): Board | undefined {
+    return this.todosBoards.find(b => b.id === this.boardSelecionadoId);
+  }
+
+  selecionarNaLista(id: string) {
+    this.boardSelecionadoId = id;
+    this.renomeando = false;
+    this.confirmandoExclusao = false;
+  }
+
+  iniciarRenomeio() {
+    if (this.boardSelecionado) {
+      this.renomeando = true;
+      this.confirmandoExclusao = false;
+    }
+  }
+
+  confirmarRenomeio(novoNome: string) {
+    const limpo = novoNome.trim();
+    if (!limpo || !this.boardSelecionado) return;
+    this.boards.renomear(this.boardSelecionado.id, limpo);
+    this.renomeando = false;
+  }
+
+  iniciarExclusao() {
+    if (this.boardSelecionado) {
+      this.confirmandoExclusao = true;
+      this.renomeando = false;
+    }
+  }
+
+  confirmarExclusao() {
+    if (!this.boardSelecionado) return;
+    this.boards.excluir(this.boardSelecionado.id);
+    this.confirmandoExclusao = false;
+  }
+
+  abrir() {
+    if (!this.boardSelecionado) return;
+    this.boards.selecionar(this.boardSelecionado);
+    this.fechar.emit();
+  }
+
+  criar(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo) return;
+    this.boards.criar(limpo);
+    this.fechar.emit();
+  }
+
+  iniciarArraste(evento: MouseEvent) {
+    const modal = this.modalRef.nativeElement;
+    const retangulo = modal.getBoundingClientRect();
+
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    modal.style.top = `${retangulo.top}px`;
+    modal.style.left = `${retangulo.left}px`;
+
+    this.arrastando = true;
+    this.offsetX = evento.clientX - retangulo.left;
+    this.offsetY = evento.clientY - retangulo.top;
+    evento.preventDefault();
+    evento.stopPropagation();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  mover(evento: MouseEvent) {
+    if (!this.arrastando) return;
+    const modal = this.modalRef.nativeElement;
+    modal.style.left = `${evento.clientX - this.offsetX}px`;
+    modal.style.top = `${evento.clientY - this.offsetY}px`;
+  }
+
+  @HostListener('document:mouseup')
+  pararArraste() {
+    this.arrastando = false;
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.html` — substitua todo o conteúdo:
+
+```html
+<div class="backdrop">
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Painéis</div>
+
+    <label>Painel</label>
+    <select #selectBoard (change)="selecionarNaLista(selectBoard.value)">
+      @for (b of todosBoards; track b.id) {
+        <option [value]="b.id" [selected]="b.id === boardSelecionadoId">{{ b.nome }}</option>
+      }
+    </select>
+
+    @if (renomeando) {
+      <div class="renomear">
+        <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
+        <div class="acoes-renomear">
+          <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+          <button (click)="renomeando = false">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    @if (confirmandoExclusao) {
+      <div class="confirmar-exclusao">
+        <p>Excluir "{{ boardSelecionado?.nome }}"? Os cards deste painel também serão apagados.</p>
+        <div class="acoes-confirmar">
+          <button class="perigo" (click)="confirmarExclusao()">Excluir</button>
+          <button (click)="confirmandoExclusao = false">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <div class="acoes-board">
+      <button (click)="iniciarRenomeio()">Renomear</button>
+      <button (click)="abrir()">Abrir</button>
+    </div>
+
+    <button class="excluir-board" (click)="iniciarExclusao()">Excluir Painel</button>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/board-selector-modal/board-selector-modal.scss` — substitua todo o conteúdo:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.modal label { font-size: 0.8rem; color: #555; }
+.modal select { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-board { display: flex; gap: 0.5rem; }
+.acoes-board button { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.renomear { display: flex; flex-direction: column; gap: 0.5rem; }
+.renomear input { padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-renomear { display: flex; gap: 0.5rem; }
+.acoes-renomear button { flex: 1; padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.excluir-board { padding: 6px 8px; border-radius: 4px; border: 1px solid #e53935; color: #e53935; background: white; cursor: pointer; }
+.excluir-board:hover { background: #fdecea; }
+.confirmar-exclusao { display: flex; flex-direction: column; gap: 0.5rem; background: #fff4f4; border: 1px solid #f3c2c2; border-radius: 4px; padding: 0.5rem; }
+.confirmar-exclusao p { margin: 0; font-size: 0.85rem; color: #7a1f1f; }
+.acoes-confirmar { display: flex; gap: 0.5rem; }
+.acoes-confirmar button { flex: 1; padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes-confirmar button.perigo { background: #e53935; color: white; border-color: #e53935; }
+.novo-board { display: flex; gap: 0.5rem; }
+.novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes { display: flex; justify-content: flex-end; }
+```
+
+
+Nenhum outro arquivo do projeto é tocado nesta parte — em particular, `app.ts`/`app.html` (Parte 22) não mudam: `App` continua alheio a como o modal gerencia sua própria lista de painéis.
+
+### Explicando
+
+- `CardRepository.deleteByBoardId(String boardId)` é outra consulta derivada do Spring Data JPA (a mesma técnica de `findByBoardId`, Parte 21), desta vez para exclusão: o prefixo `deleteBy` instrui o Spring Data a localizar as entidades correspondentes e removê-las, sem exigir `@Query` nem SQL manual. `BoardService.excluir` chama esse método antes de `boardRepository.deleteById(id)`, para que nenhum card fique órfão (sem painel) depois que o painel deixar de existir — o oposto do problema resolvido pela migração automática da Parte 21, evitado aqui na origem.
+- O botão "Excluir Painel" fica deliberadamente separado dos botões "Renomear"/"Abrir", em vez de dividir a mesma linha com eles: uma ação destrutiva pede algum atrito visual a mais do que uma ação reversível, e um botão isolado, com borda e texto vermelhos (`.excluir-board`), é menos provável de ser clicado por engano do que um terceiro botão espremido ao lado de dois outros do dia a dia.
+- `iniciarExclusao`/`confirmarExclusao` seguem exatamente o mesmo formato de `iniciarRenomeio`/`confirmarRenomeio`: uma flag booleana (`confirmandoExclusao`) alterna a exibição de uma seção inline; abrir uma fecha a outra (`iniciarRenomeio` zera `confirmandoExclusao`, e vice-versa), para as duas nunca aparecerem ao mesmo tempo. Trocar o painel selecionado na caixa (`selecionarNaLista`) também zera ambas, para o formulário de renomeio ou a confirmação de exclusão nunca sobreviverem a uma troca de alvo.
+- `BoardStateService.excluir`, como `renomear`, não recarrega a lista inteira do backend: a resposta de um `DELETE` não traz nada de útil de volta, então o próprio frontend remove o painel excluído do array local (`.filter(...)`). Se o painel excluído era o painel aberto no momento (`boardAtualSubject.value?.id === id`), um novo painel é selecionado automaticamente — o primeiro da lista restante, ou `null` se nenhum painel sobrar.
+- `ngOnInit`, no modal, ganhou uma proteção adicional: sempre que a lista de painéis muda (`boards$`), verifica se `boardSelecionadoId` ainda existe nessa lista (`aindaExiste`); se não existir mais — porque acabou de ser excluído —, seleciona o primeiro painel restante, ou uma string vazia se a lista ficou vazia. Sem essa verificação, a caixa de seleção continuaria "apontando" para um `id` que não existe mais em nenhuma `<option>`.
+- Uma limitação consciente: nada nesta parte impede excluir o último painel restante. Se isso acontecer, `boardAtual$` passa a emitir `null`, `App` não tem para onde chamar `KanbanStateService.selecionarBoard`, e o quadro por trás do modal simplesmente para de atualizar (mostrando os últimos cards carregados, agora "congelados"). O próprio modal, porém, continua aberto e funcional — o campo "Criar Painel" não depende de nenhum painel existir —, então a recuperação é imediata: basta criar um novo painel ali mesmo. Impedir a exclusão do último painel é perfeitamente possível, mas nenhuma necessidade real apontou para isso ainda.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`deleteBy...`** (Spring Data) | Prefixo de consulta derivada que instrui o Spring Data JPA a localizar e remover as entidades correspondentes ao critério do nome do método, sem exigir `@Query` nem SQL manual. |
+| **Confirmação inline** | Padrão de interface em que uma ação destrutiva revela uma segunda etapa de confirmação no mesmo espaço da tela, em vez de abrir uma janela ou modal separado. |
+
+### 🧪 Teste rápido
+
+Com pelo menos dois painéis, abra "Painéis", escolha um painel diferente do aberto na caixa, e clique em "Excluir Painel": a seção de confirmação deve aparecer, com o nome do painel escolhido. Clique em "Cancelar" e confirme que nada foi excluído. Clique em "Excluir Painel" de novo, agora confirmando com "Excluir": o painel deve sumir da caixa de seleção, e o board por trás do modal não deve mudar (o painel excluído não era o aberto). Reabra o modal, exclua agora o painel que está atualmente aberto, e confirme: o quadro por trás deve trocar automaticamente para outro painel restante, refletido no `<h1>` assim que o modal for fechado.
+
+---
+
 ## Encerrando o projeto: por que paramos aqui
 
-Com a Parte 22, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, selecionáveis e renomeáveis por um modal arrastável, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por outro modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; a Parte 21, a maior extração de domínio desde a Parte 10, resolvida com uma migração automática dos dados já existentes; e a Parte 22, um lembrete de que reaproveitar um mecanismo já testado (o arraste manual das Partes 17/18) pode ser mais simples do que reintroduzir uma biblioteca só porque ela "deveria" funcionar. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
+Com a Parte 23, o projeto está funcionalmente completo dentro do escopo definido na abertura deste documento: múltiplos painéis nomeados, selecionáveis, renomeáveis e excluíveis (com confirmação) por um modal arrastável, cada um com suas próprias três colunas fixas e seus próprios cards editáveis por outro modal que arrasta e redimensiona corretamente, a ordem dentro de cada coluna persistida, cada card nascendo na coluna e no painel corretos, persistência real em banco, e frontend e backend cada um com seu domínio isolado. A Parte 17 é um exemplo do método reagindo a uma mudança de requisito; a Parte 18, um lembrete de que nem toda implementação sai correta na primeira tentativa; a Parte 19, a extração de uma tentação antes descartada assim que uma necessidade real apareceu; a Parte 20, um lembrete de que um parâmetro sem uso pode esconder um bug silencioso por várias partes; a Parte 21, a maior extração de domínio desde a Parte 10, resolvida com uma migração automática dos dados já existentes; a Parte 22, um lembrete de que reaproveitar um mecanismo já testado pode ser mais simples do que reintroduzir uma biblioteca só porque ela "deveria" funcionar; e a Parte 23, uma escolha explícita entre duas formas válidas de pedir confirmação para uma ação destrutiva — inline no mesmo modal, em vez de um segundo modal por cima do primeiro —, justificada pelo tamanho real do problema, não por hábito. Como no Sudoku, vale registrar, com o mesmo rigor aplicado a cada extração, por que paramos exatamente aqui, porque decidir não continuar também é um exercício do método.
