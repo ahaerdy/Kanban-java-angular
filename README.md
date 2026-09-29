@@ -150,4 +150,13 @@ O projeto foi encerrado, por decisão consciente, com o escopo descrito acima �
 
 ## Licença
 
-Defina aqui a licença do projeto (por exemplo, MIT), se pretende publicá-lo como open source.
+Este projeto está licenciado sob a licença MIT — veja o arquivo [`LICENSE`](LICENSE) para o texto completo.
+
+## Autor
+
+**Arthur Haerdy Jr.**
+Marília, SP — Brasil
+
+- GitHub: [github.com/ahaerdy](https://github.com/ahaerdy)
+- LinkedIn: [linkedin.com/in/arthur-haerdy-jr](https://linkedin.com/in/arthur-haerdy-jr)
+- E-mail: [arthur.haerdy@gmail.com](mailto:arthur.haerdy@gmail.com)
