@@ -154,6 +154,6 @@ Este projeto está licenciado sob a licença MIT — veja o arquivo [`LICENSE`](
 
 ## Autor
 
- GitHub: [github.com/ahaerdy](https://github.com/ahaerdy)
+- GitHub: [github.com/ahaerdy](https://github.com/ahaerdy)
 - LinkedIn: [linkedin.com/in/arthur-haerdy-jr](https://linkedin.com/in/arthur-haerdy-jr)
 - E-mail: [arthur.haerdy@gmail.com](mailto:arthur.haerdy@gmail.com)
