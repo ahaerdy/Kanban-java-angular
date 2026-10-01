@@ -21,7 +21,7 @@ O desenvolvimento segue a metodologia de Design Emergente, na qual a estrutura d
 
 Cada entrada corresponde a um momento de evolução real do código, geralmente motivado por uma repetição identificada durante a implementação, por uma limitação estrutural percebida no template, ou por uma necessidade funcional nova. As entradas são cumulativas: decisões registradas em uma entrada permanecem válidas, ou são explicitamente revistas, nas entradas seguintes.
 
-Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`. Por fim, a ordem dos cards dentro de uma coluna, alterada por arrastar-e-soltar, passou a ser persistida no backend, sobrevivendo a um F5 na página. Por fim, um card criado a partir de "Em Andamento" ou "Concluído" passou a nascer na coluna correta, em vez de sempre em "A Fazer".
+Este documento será atualizado conforme o desenvolvimento avança. No momento, cobre da configuração inicial do projeto frontend até a persistência real dos dados em um banco de dados MySQL, executado em container Docker, com os dados sobrevivendo a reinícios do backend e do próprio banco, e a restrição do campo `coluna` a um conjunto fechado de valores válidos no backend, por meio de um `enum`, além da evolução do campo `etiqueta` (singular, texto livre) para `etiquetas` (coleção de um `enum` com cor associada). No frontend, um serviço central (`KanbanStateService`) passou a notificar automaticamente qualquer consumidor interessado no estado dos cards, papel ao qual o próprio `App` também migrou, depois de o padrão de notificação ser validado por um segundo consumidor (`CardCountComponent`). Por fim, um card passou a poder ser editado — título, descrição e uma etiqueta de nome e cor livres — por um modal arrastável e redimensionável, substituindo o catálogo fixo de etiquetas da Parte 14. A implementação inicial do modal (Parte 17) tinha o arraste e o redimensionamento quebrados por uma interação com o `cdkDrag` já usado no board; a correção definitiva (Parte 18) removeu o modal de dentro da árvore do card, elevando seu controle para `App`. Por fim, a ordem dos cards dentro de uma coluna, alterada por arrastar-e-soltar, passou a ser persistida no backend, sobrevivendo a um F5 na página. Por fim, um card criado a partir de "Em Andamento" ou "Concluído" passou a nascer na coluna correta, em vez de sempre em "A Fazer". O projeto passou então a suportar múltiplos painéis nomeados (Parte 21), com migração automática dos cards já existentes para um painel padrão; o modal de painéis evoluiu para uma caixa de seleção com renomeio (Parte 22) e exclusão com confirmação (Parte 23), cuja exclusão em cascata dos cards exigiu uma transação explícita para funcionar corretamente com painéis não vazios (Parte 24), quando o projeto foi encerrado, para fins de apresentação do conceito.
 
 ---
 
@@ -49,6 +49,10 @@ Este documento será atualizado conforme o desenvolvimento avança. No momento, 
 - [Parte 18: Corrigindo o Arraste e o Redimensionamento do Modal](#parte-18-corrigindo-o-arraste-e-o-redimensionamento-do-modal)
 - [Parte 19: Persistindo a Ordem dos Cards Dentro de uma Coluna](#parte-19-persistindo-a-ordem-dos-cards-dentro-de-uma-coluna)
 - [Parte 20: Corrigindo a Coluna de Criação de um Card](#parte-20-corrigindo-a-coluna-de-criação-de-um-card)
+- [Parte 21: Múltiplos Painéis (Boards)](#parte-21-múltiplos-painéis-boards)
+- [Parte 22: Selecionando e Renomeando Painéis por uma Caixa de Seleção](#parte-22-selecionando-e-renomeando-painéis-por-uma-caixa-de-seleção)
+- [Parte 23: Excluindo um Painel, com Confirmação](#parte-23-excluindo-um-painel-com-confirmação)
+- [Parte 24: Corrigindo a Exclusão de Painéis com Cards](#parte-24-corrigindo-a-exclusão-de-painéis-com-cards)
 
 ---
 
@@ -4493,6 +4497,1993 @@ export class App implements OnInit {
 ### Resultado
 
 Confirmado pelo usuário: cards criados em "Em Andamento" e em "Concluído" passaram a aparecer nas colunas corretas, inclusive depois de um F5 na página.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 21: Múltiplos Painéis (Boards)
+
+### Objetivo
+
+Permitir a existência de mais de um painel (board), cada um nomeado, com suas próprias três colunas fixas e seus próprios cards — até aqui, o projeto tinha exatamente um quadro implícito, sem nenhuma noção de painel.
+
+### Limitação Identificada
+
+O projeto já tinha cards reais, gravados no banco ao longo de vinte partes, sem nenhuma noção de painel. Adicionar uma coluna `board_id` à tabela `card` não teletransporta esses cards para painel nenhum — eles nasceriam com `board_id` nulo, o mesmo tipo de órfão já visto nas Partes 14 e 18. Diferente daquelas partes, a correção não ficaria para o leitor aplicar manualmente por SQL: o próprio backend, ao subir, garante um painel padrão e migra os cards órfãos para dentro dele automaticamente.
+
+### Implementação Realizada
+
+- Nova entidade `Board` (`id`, `nome`), com `BoardRepository`.
+- `BoardService.garantirBoardPadrao()`, anotado com `@PostConstruct`, cria um painel "Meu Quadro" na primeira inicialização (guardado por `boardRepository.count() > 0`) e migra para dentro dele qualquer card com `boardId` nulo.
+- Novo endpoint `GET /boards` e `POST /boards` (`BoardController`/`BoardCreateRequest`).
+- `Card` ganhou o campo `boardId`; `CardRepository` ganhou `findByBoardId(String, Sort)` e `findByBoardIdIsNull()`.
+- `GET /cards` passou a exigir `?boardId=`; `POST /cards` passou a exigir a coluna `boardId` no corpo (`CardCreateRequest`).
+- `KanbanStateService` passou a guardar o painel selecionado internamente (`selecionarBoard`), usado por `carregar()`/`criar()`.
+- Novo `BoardStateService`/`BoardApiService`, espelhando `KanbanStateService`/`KanbanApiService`.
+- Nova barra lateral, escrita diretamente em `app.html` (sem virar componente à parte, por não ter um segundo consumidor), com o item "Painéis" funcional, abrindo um novo `BoardSelectorModalComponent`; os demais itens (`Etiquetas`, `Config.`, `Ajuda`) são botões `disabled`.
+- O nome do painel selecionado passou a ser exibido no `<h1>` do topo da página, dentro de uma faixa de destaque (`.cabecalho-board`).
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/model/Board.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+
+@Entity
+public class Board {
+
+    @Id
+    private String id;
+    private String nome;
+
+    public Board() {
+    }
+
+    public Board(String id, String nome) {
+        this.id = id;
+        this.nome = nome;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getNome() {
+        return nome;
+    }
+
+    public void setNome(String nome) {
+        this.nome = nome;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/repository/BoardRepository.java`:
+
+```java
+package com.github.ahaerdy.backend.repository;
+
+import com.github.ahaerdy.backend.model.Board;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface BoardRepository extends JpaRepository<Board, String> {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardCreateRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+public record BoardCreateRequest(String nome) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.service.BoardService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/boards")
+public class BoardController {
+
+    private final BoardService service;
+
+    public BoardController(BoardService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Board> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Board criar(@RequestBody BoardCreateRequest body) {
+        return service.criar(body.nome());
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/model/Card.java`:
+
+```java
+package com.github.ahaerdy.backend.model;
+
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+
+@Entity
+public class Card {
+
+    @Id
+    private String id;
+    private String titulo;
+    private String descricao;
+    private long ordem = System.currentTimeMillis();
+    private String boardId;
+
+    @Enumerated(EnumType.STRING)
+    private ColunaEnum coluna;
+
+    @Embedded
+    @AttributeOverrides({
+        @AttributeOverride(name = "nome", column = @Column(name = "etiqueta_nome")),
+        @AttributeOverride(name = "corHex", column = @Column(name = "etiqueta_cor_hex"))
+    })
+    private Etiqueta etiqueta;
+
+    public Card() {
+    }
+
+    public Card(String id, String titulo, ColunaEnum coluna, String boardId) {
+        this.id = id;
+        this.titulo = titulo;
+        this.coluna = coluna;
+        this.boardId = boardId;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
+    }
+
+    public String getDescricao() {
+        return descricao;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
+    public long getOrdem() {
+        return ordem;
+    }
+
+    public void setOrdem(long ordem) {
+        this.ordem = ordem;
+    }
+
+    public String getBoardId() {
+        return boardId;
+    }
+
+    public void setBoardId(String boardId) {
+        this.boardId = boardId;
+    }
+
+    public ColunaEnum getColuna() {
+        return coluna;
+    }
+
+    public void setColuna(ColunaEnum coluna) {
+        this.coluna = coluna;
+    }
+
+    public Etiqueta getEtiqueta() {
+        return etiqueta;
+    }
+
+    public void setEtiqueta(Etiqueta etiqueta) {
+        this.etiqueta = etiqueta;
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/repository/CardRepository.java`:
+
+```java
+package com.github.ahaerdy.backend.repository;
+
+import com.github.ahaerdy.backend.model.Card;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface CardRepository extends JpaRepository<Card, String> {
+
+    List<Card> findByBoardId(String boardId, Sort sort);
+
+    List<Card> findByBoardIdIsNull();
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardCreateRequest.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.ColunaEnum;
+
+public record CardCreateRequest(String titulo, ColunaEnum coluna, String boardId) {
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/CardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.service.KanbanService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/cards")
+public class CardController {
+
+    private final KanbanService service;
+
+    public CardController(KanbanService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Card> listar(@RequestParam String boardId) {
+        return service.listarTodos(boardId);
+    }
+
+    @PostMapping
+    public Card criar(@RequestBody CardCreateRequest body) {
+        return service.criar(body.titulo(), body.coluna(), body.boardId());
+    }
+
+    @PutMapping("/{id}/coluna")
+    public void mover(@PathVariable String id, @RequestBody ColunaRequest body) {
+        service.mover(id, body.coluna());
+    }
+
+    @PutMapping("/{id}")
+    public void editar(@PathVariable String id, @RequestBody CardEditRequest body) {
+        Etiqueta etiqueta = body.etiqueta() != null
+            ? new Etiqueta(body.etiqueta().nome(), body.etiqueta().corHex())
+            : null;
+        service.editar(id, body.titulo(), body.descricao(), etiqueta);
+    }
+
+    @PutMapping("/reordenar")
+    public void reordenar(@RequestBody ReordenarRequest body) {
+        service.reordenar(body.ids());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/KanbanService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Card;
+import com.github.ahaerdy.backend.model.ColunaEnum;
+import com.github.ahaerdy.backend.model.Etiqueta;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class KanbanService {
+
+    private final CardRepository repository;
+
+    public KanbanService(CardRepository repository) {
+        this.repository = repository;
+    }
+
+    public List<Card> listarTodos(String boardId) {
+        return repository.findByBoardId(boardId, Sort.by("ordem"));
+    }
+
+    public Card criar(String titulo, ColunaEnum coluna, String boardId) {
+        var novo = new Card(UUID.randomUUID().toString(), titulo, coluna, boardId);
+        return repository.save(novo);
+    }
+
+    public void mover(String id, ColunaEnum novaColuna) {
+        repository.findById(id).ifPresent(c -> {
+            c.setColuna(novaColuna);
+            c.setOrdem(System.currentTimeMillis());
+            repository.save(c);
+        });
+    }
+
+    public void editar(String id, String titulo, String descricao, Etiqueta etiqueta) {
+        repository.findById(id).ifPresent(c -> {
+            c.setTitulo(titulo);
+            c.setDescricao(descricao);
+            c.setEtiqueta(etiqueta);
+            repository.save(c);
+        });
+    }
+
+    public void reordenar(List<String> ids) {
+        for (int i = 0; i < ids.size(); i++) {
+            long posicao = i;
+            String id = ids.get(i);
+            repository.findById(id).ifPresent(c -> {
+                c.setOrdem(posicao);
+                repository.save(c);
+            });
+        }
+    }
+
+    public void excluir(String id) {
+        repository.deleteById(id);
+    }
+}
+```
+
+`src/app/models/board.ts`:
+
+```typescript
+export interface Board {
+  id: string;
+  nome: string;
+}
+```
+
+`src/app/board-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/boards';
+
+  listar() {
+    return this.http.get<Board[]>(this.baseUrl);
+  }
+
+  criar(nome: string) {
+    return this.http.post<Board>(this.baseUrl, { nome });
+  }
+}
+```
+
+`src/app/board-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { BoardApiService } from './board-api.service';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardStateService {
+  private api = inject(BoardApiService);
+
+  private boardsSubject = new BehaviorSubject<Board[]>([]);
+  readonly boards$ = this.boardsSubject.asObservable();
+
+  private boardAtualSubject = new BehaviorSubject<Board | null>(null);
+  readonly boardAtual$ = this.boardAtualSubject.asObservable();
+
+  carregarBoards() {
+    this.api.listar().subscribe(boards => {
+      this.boardsSubject.next(boards);
+      if (!this.boardAtualSubject.value && boards.length > 0) {
+        this.selecionar(boards[0]);
+      }
+    });
+  }
+
+  selecionar(board: Board) {
+    this.boardAtualSubject.next(board);
+  }
+
+  criar(nome: string) {
+    this.api.criar(nome).subscribe(novo => {
+      this.boardsSubject.next([...this.boardsSubject.value, novo]);
+      this.selecionar(novo);
+    });
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.ts`:
+
+```typescript
+import { Component, EventEmitter, Output, inject } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { BoardStateService } from '../board-state.service';
+import { Board } from '../models/board';
+
+@Component({
+  imports: [AsyncPipe],
+  selector: 'app-board-selector-modal',
+  styleUrl: './board-selector-modal.scss',
+  templateUrl: './board-selector-modal.html',
+})
+export class BoardSelectorModalComponent {
+  private boards = inject(BoardStateService);
+  @Output() fechar = new EventEmitter<void>();
+
+  boards$ = this.boards.boards$;
+
+  selecionar(board: Board) {
+    this.boards.selecionar(board);
+    this.fechar.emit();
+  }
+
+  criar(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo) return;
+    this.boards.criar(limpo);
+    this.fechar.emit();
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.html`:
+
+```html
+<div class="backdrop">
+  <div class="modal">
+    <div class="cabecalho-modal">Painéis</div>
+
+    <ul class="lista-boards">
+      @for (b of (boards$ | async); track b.id) {
+        <li>
+          <button (click)="selecionar(b)">{{ b.nome }}</button>
+        </li>
+      }
+    </ul>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/board-selector-modal/board-selector-modal.scss`:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+.cabecalho-modal { font-weight: bold; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.lista-boards { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; }
+.lista-boards li { margin-bottom: 4px; }
+.lista-boards button { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; background: #fafafa; cursor: pointer; }
+.lista-boards button:hover { background: #eef2ff; }
+.novo-board { display: flex; gap: 0.5rem; }
+.novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes { display: flex; justify-content: flex-end; }
+```
+
+`src/app/models/card.ts`:
+
+```typescript
+export interface Etiqueta {
+  nome: string;
+  corHex: string;
+}
+
+export interface Card {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+  ordem: number;
+  boardId: string;
+}
+
+export interface CardEdicao {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  etiqueta: Etiqueta | null;
+}
+```
+
+`src/app/kanban-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/cards';
+
+  listar(boardId: string) {
+    return this.http.get<Card[]>(`${this.baseUrl}?boardId=${boardId}`);
+  }
+
+  criar(titulo: string, coluna: string, boardId: string) {
+    return this.http.post<Card>(this.baseUrl, { titulo, coluna, boardId });
+  }
+
+  mover(id: string, coluna: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}/coluna`, { coluna });
+  }
+
+  editar(edicao: CardEdicao) {
+    const { id, titulo, descricao, etiqueta } = edicao;
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { titulo, descricao, etiqueta });
+  }
+
+  reordenar(ids: string[]) {
+    return this.http.put<void>(`${this.baseUrl}/reordenar`, { ids });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/kanban-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { KanbanApiService } from './kanban-api.service';
+import { Card, CardEdicao } from './models/card';
+
+@Injectable({ providedIn: 'root' })
+export class KanbanStateService {
+  private api = inject(KanbanApiService);
+  private cardsSubject = new BehaviorSubject<Card[]>([]);
+  readonly cards$ = this.cardsSubject.asObservable();
+
+  private boardId: string | null = null;
+
+  selecionarBoard(boardId: string) {
+    this.boardId = boardId;
+    this.carregar();
+  }
+
+  carregar() {
+    if (!this.boardId) return;
+    this.api.listar(this.boardId).subscribe(cards => this.cardsSubject.next(cards));
+  }
+
+  mover(id: string, coluna: string) {
+    this.api.mover(id, coluna).subscribe(() => this.carregar());
+  }
+
+  criar(titulo: string, coluna: string) {
+    if (!this.boardId) return;
+    this.api.criar(titulo, coluna, this.boardId).subscribe(() => this.carregar());
+  }
+
+  editar(edicao: CardEdicao) {
+    this.api.editar(edicao).subscribe(() => this.carregar());
+  }
+
+  reordenar(ids: string[]) {
+    this.api.reordenar(ids).subscribe(() => this.carregar());
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => this.carregar());
+  }
+}
+```
+
+`src/app/app.ts`:
+
+```typescript
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
+import { AsyncPipe } from '@angular/common';
+import { DragDropModule, CdkDragDrop, moveItemInArray, transferArrayItem } from '@angular/cdk/drag-drop';
+import { Card, CardEdicao } from './models/card';
+import { CardItemComponent } from './card-item/card-item';
+import { CardCountComponent } from './card-count/card-count';
+import { CardEditModalComponent } from './card-edit-modal/card-edit-modal';
+import { BoardSelectorModalComponent } from './board-selector-modal/board-selector-modal';
+import { KanbanStateService } from './kanban-state.service';
+import { BoardStateService } from './board-state.service';
+
+interface CardApi extends Card {
+  coluna: 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO';
+}
+
+const COLUNA_POR_ID: Record<string, 'A_FAZER' | 'EM_ANDAMENTO' | 'CONCLUIDO'> = {
+  aFazer: 'A_FAZER',
+  emAndamento: 'EM_ANDAMENTO',
+  concluido: 'CONCLUIDO',
+};
+
+@Component({
+  imports: [
+    CardItemComponent,
+    DragDropModule,
+    CardCountComponent,
+    CardEditModalComponent,
+    BoardSelectorModalComponent,
+    AsyncPipe,
+  ],
+  selector: 'app-root',
+  styleUrl: './app.scss',
+  templateUrl: './app.html',
+})
+export class App implements OnInit {
+  private state = inject(KanbanStateService);
+  private boards = inject(BoardStateService);
+  private cdr = inject(ChangeDetectorRef);
+
+  aFazer: Card[] = [];
+  emAndamento: Card[] = [];
+  concluido: Card[] = [];
+
+  cardEmEdicao: Card | null = null;
+  seletorDeBoardsAberto = false;
+
+  boardAtual$ = this.boards.boardAtual$;
+
+  ngOnInit() {
+    this.state.cards$.subscribe(cards => {
+      const todas = cards as CardApi[];
+      this.aFazer = todas.filter(c => c.coluna === 'A_FAZER');
+      this.emAndamento = todas.filter(c => c.coluna === 'EM_ANDAMENTO');
+      this.concluido = todas.filter(c => c.coluna === 'CONCLUIDO');
+      this.cdr.markForCheck();
+    });
+
+    this.boards.boardAtual$.subscribe(board => {
+      if (board) {
+        this.state.selecionarBoard(board.id);
+      }
+    });
+
+    this.boards.carregarBoards();
+  }
+
+  drop(event: CdkDragDrop<Card[]>) {
+    if (event.previousContainer === event.container) {
+      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+      this.state.reordenar(event.container.data.map(c => c.id));
+      return;
+    }
+    transferArrayItem(event.previousContainer.data, event.container.data, event.previousIndex, event.currentIndex);
+    const card = event.container.data[event.currentIndex];
+    const novaColuna = COLUNA_POR_ID[event.container.id];
+    this.state.mover(card.id, novaColuna);
+  }
+
+  adicionar(colunaId: string, titulo: string) {
+    if (!titulo.trim()) return;
+    this.state.criar(titulo, COLUNA_POR_ID[colunaId]);
+  }
+
+  abrirEdicao(card: Card) {
+    this.cardEmEdicao = card;
+  }
+
+  salvarEdicao(edicao: CardEdicao) {
+    this.cardEmEdicao = null;
+    this.state.editar(edicao);
+  }
+
+  fecharEdicao() {
+    this.cardEmEdicao = null;
+  }
+
+  remover(coluna: Card[], card: Card) {
+    this.state.excluir(card.id);
+  }
+
+  abrirSeletorDeBoards() {
+    this.seletorDeBoardsAberto = true;
+  }
+
+  fecharSeletorDeBoards() {
+    this.seletorDeBoardsAberto = false;
+  }
+}
+```
+
+`src/app/app.html`:
+
+```html
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo">Kanban</div>
+    <button class="item" (click)="abrirSeletorDeBoards()">Painéis</button>
+    <button class="item" disabled>Etiquetas</button>
+    <button class="item" disabled>Config.</button>
+    <button class="item" disabled>Ajuda</button>
+  </nav>
+
+  <div class="conteudo">
+    <div class="cabecalho-board">
+      <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    </div>
+    <app-card-count />
+    <div class="board">
+      <div class="column">
+        <h2>A Fazer</h2>
+        <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+             id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of aFazer; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloAFazer placeholder="Nova tarefa" />
+          <button (click)="adicionar('aFazer', novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Em Andamento</h2>
+        <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+             id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of emAndamento; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+          <button (click)="adicionar('emAndamento', novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Concluído</h2>
+        <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+             id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of concluido; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloConcluido placeholder="Nova tarefa" />
+          <button (click)="adicionar('concluido', novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}
+
+@if (seletorDeBoardsAberto) {
+  <app-board-selector-modal (fechar)="fecharSeletorDeBoards()" />
+}
+```
+
+`src/app/app.scss`:
+
+```scss
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: #1f2430;
+  color: #cfd3dc;
+  padding: 1rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .logo { font-size: 1.6rem; font-weight: bold; color: white; padding: 0 1.25rem 1.5rem; }
+
+.sidebar .item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.85rem 1.25rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 1.15rem;
+  cursor: pointer;
+}
+
+.sidebar .item:hover:not(:disabled) { background: #2b3244; }
+.sidebar .item:disabled { color: #8a92a6; cursor: default; }
+
+.conteudo { flex: 1; padding: 1rem; }
+
+.cabecalho-board { background: #e4e6eb; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1rem; }
+.cabecalho-board h1 { margin: 0; font-size: 1.6rem; }
+
+.board { display: flex; gap: 1rem; padding: 1rem; }
+.column { background: #eee; border-radius: 8px; padding: 1rem; width: 360px; }
+.dropzone { min-height: 80px; }
+.nova-tarefa { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.nova-tarefa input { flex: 1; min-width: 0; }
+```
+
+### Descrição Técnica
+
+- `@PostConstruct` executa um método automaticamente, uma única vez, logo após a construção do bean, antes da aplicação aceitar requisições — o ponto exato para uma migração de dados que precisa rodar no máximo uma vez por ambiente.
+- `findByBoardId(String boardId, Sort sort)` é uma consulta derivada do Spring Data JPA que combina filtro e ordenação na mesma consulta, sem exigir `@Query`.
+- `BoardSelectorModalComponent` segue a mesma arquitetura de `CardEditModalComponent` (elevado a `App`, nunca descendente de um card).
+- A barra lateral não virou um componente à parte porque nada mais no projeto precisa reutilizá-la — extrair cedo demais seria a mesma abstração prematura que o tutorial evita desde o início.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@PostConstruct`** | Anotação que marca um método para rodar automaticamente uma vez, logo após a construção e injeção de dependências de um bean gerenciado pelo Spring. |
+| **Consulta derivada** (*derived query*) | Recurso do Spring Data JPA em que o nome de um método de repositório é traduzido automaticamente em uma consulta SQL. |
+| **Migração automática** | Estratégia em que o próprio código da aplicação, ao iniciar, detecta e corrige um estado de dados desatualizado, em vez de exigir um passo manual do desenvolvedor. |
+
+### Resultado
+
+A implementação foi validada com sucesso: os cards já existentes apareceram automaticamente dentro de um painel "Meu Quadro" na primeira subida do backend após esta parte; novos painéis criados pelo modal nasceram vazios, com suas próprias três colunas; e alternar entre painéis manteve os cards de cada um isolados corretamente.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 22: Selecionando e Renomeando Painéis por uma Caixa de Seleção
+
+### Objetivo
+
+Substituir a lista de botões empilhados do modal de painéis (Parte 21) por uma caixa de seleção (`<select>`), e acrescentar duas ações: renomear o painel escolhido, e abri-lo explicitamente. O modal também passou a ser arrastável. Adicionalmente, três ajustes visuais foram feitos após uma primeira captura de tela real: fontes maiores na barra lateral, o nome do aplicativo trocado de "Kanban" para "🗃️KBoard", e a linha do contador de cards comentada.
+
+### Implementação Realizada
+
+- `<select>` no lugar da lista de botões, com `boardSelecionadoId` controlando qual painel está em foco no modal (distinto do painel realmente aberto no board).
+- Botões "Renomear" e "Abrir": "Renomear" revela um formulário inline (mesmo padrão já usado nesta interface); "Abrir" é o único ponto que troca de fato o painel ativo e fecha o modal.
+- Novo endpoint `PUT /boards/{id}`, reaproveitando `BoardCreateRequest` como corpo (a forma é idêntica entre criar e renomear).
+- `BoardStateService.renomear` atualiza a lista local diretamente, sem recarregar tudo do backend.
+- Arraste do modal implementado manualmente (`iniciarArraste`/`mover`/`pararArraste`, com `@HostListener`), reaproveitando o mesmo controlador já validado em `CardEditModalComponent` (Partes 17/18), em vez de reintroduzir `cdkDrag`.
+- Ajustes visuais: `.renomear` reorganizado (campo de texto em linha própria, botões abaixo, corrigindo o botão "Cancelar" que excedia a largura do modal); `.logo` alterado para "🗃️KBoard"; `<app-card-count />` comentado em `app.html`.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.service.BoardService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/boards")
+public class BoardController {
+
+    private final BoardService service;
+
+    public BoardController(BoardService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Board> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Board criar(@RequestBody BoardCreateRequest body) {
+        return service.criar(body.nome());
+    }
+
+    @PutMapping("/{id}")
+    public void renomear(@PathVariable String id, @RequestBody BoardCreateRequest body) {
+        service.renomear(id, body.nome());
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
+}
+```
+
+`src/app/board-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/boards';
+
+  listar() {
+    return this.http.get<Board[]>(this.baseUrl);
+  }
+
+  criar(nome: string) {
+    return this.http.post<Board>(this.baseUrl, { nome });
+  }
+
+  renomear(id: string, nome: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { nome });
+  }
+}
+```
+
+`src/app/board-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { BoardApiService } from './board-api.service';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardStateService {
+  private api = inject(BoardApiService);
+
+  private boardsSubject = new BehaviorSubject<Board[]>([]);
+  readonly boards$ = this.boardsSubject.asObservable();
+
+  private boardAtualSubject = new BehaviorSubject<Board | null>(null);
+  readonly boardAtual$ = this.boardAtualSubject.asObservable();
+
+  carregarBoards() {
+    this.api.listar().subscribe(boards => {
+      this.boardsSubject.next(boards);
+      if (!this.boardAtualSubject.value && boards.length > 0) {
+        this.selecionar(boards[0]);
+      }
+    });
+  }
+
+  selecionar(board: Board) {
+    this.boardAtualSubject.next(board);
+  }
+
+  criar(nome: string) {
+    this.api.criar(nome).subscribe(novo => {
+      this.boardsSubject.next([...this.boardsSubject.value, novo]);
+      this.selecionar(novo);
+    });
+  }
+
+  renomear(id: string, novoNome: string) {
+    this.api.renomear(id, novoNome).subscribe(() => {
+      const atualizados = this.boardsSubject.value.map(b => (b.id === id ? { ...b, nome: novoNome } : b));
+      this.boardsSubject.next(atualizados);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next({ ...atual, nome: novoNome });
+      }
+    });
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.ts`:
+
+```typescript
+import { Component, ElementRef, EventEmitter, HostListener, OnInit, Output, ViewChild, inject } from '@angular/core';
+import { BoardStateService } from '../board-state.service';
+import { Board } from '../models/board';
+
+@Component({
+  imports: [],
+  selector: 'app-board-selector-modal',
+  styleUrl: './board-selector-modal.scss',
+  templateUrl: './board-selector-modal.html',
+})
+export class BoardSelectorModalComponent implements OnInit {
+  private boards = inject(BoardStateService);
+  @Output() fechar = new EventEmitter<void>();
+
+  @ViewChild('modalRef') modalRef!: ElementRef<HTMLDivElement>;
+
+  todosBoards: Board[] = [];
+  boardSelecionadoId = '';
+  renomeando = false;
+
+  private arrastando = false;
+  private offsetX = 0;
+  private offsetY = 0;
+
+  ngOnInit() {
+    this.boards.boards$.subscribe(boards => {
+      this.todosBoards = boards;
+      if (!this.boardSelecionadoId && boards.length > 0) {
+        this.boardSelecionadoId = boards[0].id;
+      }
+    });
+    this.boards.boardAtual$.subscribe(atual => {
+      if (atual) {
+        this.boardSelecionadoId = atual.id;
+      }
+    });
+  }
+
+  get boardSelecionado(): Board | undefined {
+    return this.todosBoards.find(b => b.id === this.boardSelecionadoId);
+  }
+
+  selecionarNaLista(id: string) {
+    this.boardSelecionadoId = id;
+    this.renomeando = false;
+  }
+
+  iniciarRenomeio() {
+    if (this.boardSelecionado) {
+      this.renomeando = true;
+    }
+  }
+
+  confirmarRenomeio(novoNome: string) {
+    const limpo = novoNome.trim();
+    if (!limpo || !this.boardSelecionado) return;
+    this.boards.renomear(this.boardSelecionado.id, limpo);
+    this.renomeando = false;
+  }
+
+  abrir() {
+    if (!this.boardSelecionado) return;
+    this.boards.selecionar(this.boardSelecionado);
+    this.fechar.emit();
+  }
+
+  criar(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo) return;
+    this.boards.criar(limpo);
+    this.fechar.emit();
+  }
+
+  iniciarArraste(evento: MouseEvent) {
+    const modal = this.modalRef.nativeElement;
+    const retangulo = modal.getBoundingClientRect();
+
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    modal.style.top = `${retangulo.top}px`;
+    modal.style.left = `${retangulo.left}px`;
+
+    this.arrastando = true;
+    this.offsetX = evento.clientX - retangulo.left;
+    this.offsetY = evento.clientY - retangulo.top;
+    evento.preventDefault();
+    evento.stopPropagation();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  mover(evento: MouseEvent) {
+    if (!this.arrastando) return;
+    const modal = this.modalRef.nativeElement;
+    modal.style.left = `${evento.clientX - this.offsetX}px`;
+    modal.style.top = `${evento.clientY - this.offsetY}px`;
+  }
+
+  @HostListener('document:mouseup')
+  pararArraste() {
+    this.arrastando = false;
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.html`:
+
+```html
+<div class="backdrop">
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Painéis</div>
+
+    <label>Painel</label>
+    <select #selectBoard (change)="selecionarNaLista(selectBoard.value)">
+      @for (b of todosBoards; track b.id) {
+        <option [value]="b.id" [selected]="b.id === boardSelecionadoId">{{ b.nome }}</option>
+      }
+    </select>
+
+    @if (renomeando) {
+      <div class="renomear">
+        <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
+        <div class="acoes-renomear">
+          <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+          <button (click)="renomeando = false">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <div class="acoes-board">
+      <button (click)="iniciarRenomeio()">Renomear</button>
+      <button (click)="abrir()">Abrir</button>
+    </div>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/board-selector-modal/board-selector-modal.scss`:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.modal label { font-size: 0.8rem; color: #555; }
+.modal select { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-board { display: flex; gap: 0.5rem; }
+.acoes-board button { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.renomear { display: flex; flex-direction: column; gap: 0.5rem; }
+.renomear input { padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-renomear { display: flex; gap: 0.5rem; }
+.acoes-renomear button { flex: 1; padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.novo-board { display: flex; gap: 0.5rem; }
+.novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes { display: flex; justify-content: flex-end; }
+```
+
+`src/app/app.html`:
+
+```html
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo">🗃️KBoard</div>
+    <button class="item" (click)="abrirSeletorDeBoards()">Painéis</button>
+    <button class="item" disabled>Etiquetas</button>
+    <button class="item" disabled>Config.</button>
+    <button class="item" disabled>Ajuda</button>
+  </nav>
+
+  <div class="conteudo">
+    <div class="cabecalho-board">
+      <h1>{{ (boardAtual$ | async)?.nome ?? 'Kanban' }}</h1>
+    </div>
+    <!-- <app-card-count /> -->
+    <div class="board">
+      <div class="column">
+        <h2>A Fazer</h2>
+        <div cdkDropList [cdkDropListData]="aFazer" [cdkDropListConnectedTo]="['emAndamento','concluido']"
+             id="aFazer" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of aFazer; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(aFazer, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloAFazer placeholder="Nova tarefa" />
+          <button (click)="adicionar('aFazer', novoTituloAFazer.value); novoTituloAFazer.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Em Andamento</h2>
+        <div cdkDropList [cdkDropListData]="emAndamento" [cdkDropListConnectedTo]="['aFazer','concluido']"
+             id="emAndamento" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of emAndamento; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(emAndamento, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloEmAndamento placeholder="Nova tarefa" />
+          <button (click)="adicionar('emAndamento', novoTituloEmAndamento.value); novoTituloEmAndamento.value = ''">+</button>
+        </div>
+      </div>
+      <div class="column">
+        <h2>Concluído</h2>
+        <div cdkDropList [cdkDropListData]="concluido" [cdkDropListConnectedTo]="['aFazer','emAndamento']"
+             id="concluido" (cdkDropListDropped)="drop($event)" class="dropzone">
+          @for (c of concluido; track c.id) {
+            <app-card-item [card]="c" cdkDrag (remover)="remover(concluido, $event)" (abrirEdicao)="abrirEdicao($event)" />
+          }
+        </div>
+        <div class="nova-tarefa">
+          <input #novoTituloConcluido placeholder="Nova tarefa" />
+          <button (click)="adicionar('concluido', novoTituloConcluido.value); novoTituloConcluido.value = ''">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+@if (cardEmEdicao) {
+  <app-card-edit-modal [card]="cardEmEdicao" (salvar)="salvarEdicao($event)" (cancelar)="fecharEdicao()" />
+}
+
+@if (seletorDeBoardsAberto) {
+  <app-board-selector-modal (fechar)="fecharSeletorDeBoards()" />
+}
+```
+
+### Descrição Técnica
+
+- O `<select>` usa `[selected]="b.id === boardSelecionadoId"` e é lido via variável de referência de template (`#selectBoard` + `.value`), o mesmo idioma já usado em todo campo de texto do projeto, evitando `FormsModule`/`ngModel` para um único campo.
+- `cdkDrag` foi deliberadamente evitado aqui: embora este modal não tivesse o problema de ancestralidade das Partes 17/18 (também é renderizado por `App`), reaproveitar um mecanismo já testado pareceu mais seguro do que confiar que `cdkDrag` "deveria" funcionar e descobrir alguma outra interação inesperada depois.
+- A duplicação de nome de arquivo nos blocos de código gerados para esta parte (um defeito de formatação, não de conteúdo) foi identificada e corrigida durante a revisão.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **Variável de referência de template em um `<select>`** | O mesmo mecanismo (`#nome`) usado em campos de texto também funciona em um `<select>`, expondo `.value` como o valor da opção selecionada. |
+| **Atualização local de estado** | Quando a resposta de uma chamada à API não traz de volta o dado necessário, e esse dado já é conhecido no frontend, atualizar o estado local evita uma chamada de rede supérflua. |
+
+### Resultado
+
+A implementação foi validada com sucesso: a caixa de seleção substituiu a lista de botões corretamente; renomear um painel diferente do aberto não afetou o board exibido; "Abrir" trocou o painel corretamente; o modal se mostrou arrastável, sem nenhuma cópia fantasma. Os três ajustes visuais (fontes, nome do aplicativo, contador comentado) também foram confirmados.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 23: Excluindo um Painel, com Confirmação
+
+### Objetivo
+
+Acrescentar ao modal de painéis a opção de excluir o painel selecionado, com confirmação antes de apagar — diferente de excluir um card (sempre imediato, sem confirmação, desde a Parte 7), excluir um painel apaga também todos os cards dentro dele.
+
+### Implementação Realizada
+
+- A confirmação foi colocada no mesmo modal, não em um modal separado: um segundo modal replicaria toda a mecânica de arraste/backdrop já existente só para perguntar "tem certeza?", e introduziria modal-sobre-modal sem necessidade real. Uma seção inline (`confirmandoExclusao`), com fundo vermelho-claro, segue o mesmo formato já usado por "Renomear".
+- `CardRepository.deleteByBoardId(String boardId)`, uma consulta derivada de exclusão, chamada por `BoardService.excluir` antes de `boardRepository.deleteById(id)`, para nenhum card ficar órfão.
+- Novo endpoint `DELETE /boards/{id}`.
+- Botão "Excluir Painel" separado visualmente de "Renomear"/"Abrir" (borda e texto vermelhos), para uma ação destrutiva ter algum atrito visual a mais.
+- `iniciarExclusao`/`confirmarExclusao` seguem o mesmo formato de `iniciarRenomeio`/`confirmarRenomeio`; abrir uma seção fecha a outra.
+- `BoardStateService.excluir` remove o painel do array local e, se era o painel aberto, seleciona automaticamente outro (ou `null`, se não sobrar nenhum).
+- Proteção no modal: se o painel selecionado na caixa deixar de existir na lista (por ter sido excluído), a seleção volta para o primeiro painel restante, ou fica vazia.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/repository/CardRepository.java`:
+
+```java
+package com.github.ahaerdy.backend.repository;
+
+import com.github.ahaerdy.backend.model.Card;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface CardRepository extends JpaRepository<Card, String> {
+
+    List<Card> findByBoardId(String boardId, Sort sort);
+
+    List<Card> findByBoardIdIsNull();
+
+    void deleteByBoardId(String boardId);
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
+
+    public void excluir(String id) {
+        cardRepository.deleteByBoardId(id);
+        boardRepository.deleteById(id);
+    }
+}
+```
+
+`src/main/java/com/github/ahaerdy/backend/web/BoardController.java`:
+
+```java
+package com.github.ahaerdy.backend.web;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.service.BoardService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@CrossOrigin(origins = "http://localhost:4200")
+@RequestMapping("/boards")
+public class BoardController {
+
+    private final BoardService service;
+
+    public BoardController(BoardService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    public List<Board> listar() {
+        return service.listarTodos();
+    }
+
+    @PostMapping
+    public Board criar(@RequestBody BoardCreateRequest body) {
+        return service.criar(body.nome());
+    }
+
+    @PutMapping("/{id}")
+    public void renomear(@PathVariable String id, @RequestBody BoardCreateRequest body) {
+        service.renomear(id, body.nome());
+    }
+
+    @DeleteMapping("/{id}")
+    public void excluir(@PathVariable String id) {
+        service.excluir(id);
+    }
+}
+```
+
+`src/app/board-api.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardApiService {
+  private http = inject(HttpClient);
+  private baseUrl = 'http://localhost:8080/boards';
+
+  listar() {
+    return this.http.get<Board[]>(this.baseUrl);
+  }
+
+  criar(nome: string) {
+    return this.http.post<Board>(this.baseUrl, { nome });
+  }
+
+  renomear(id: string, nome: string) {
+    return this.http.put<void>(`${this.baseUrl}/${id}`, { nome });
+  }
+
+  excluir(id: string) {
+    return this.http.delete<void>(`${this.baseUrl}/${id}`);
+  }
+}
+```
+
+`src/app/board-state.service.ts`:
+
+```typescript
+import { Injectable, inject } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+import { BoardApiService } from './board-api.service';
+import { Board } from './models/board';
+
+@Injectable({ providedIn: 'root' })
+export class BoardStateService {
+  private api = inject(BoardApiService);
+
+  private boardsSubject = new BehaviorSubject<Board[]>([]);
+  readonly boards$ = this.boardsSubject.asObservable();
+
+  private boardAtualSubject = new BehaviorSubject<Board | null>(null);
+  readonly boardAtual$ = this.boardAtualSubject.asObservable();
+
+  carregarBoards() {
+    this.api.listar().subscribe(boards => {
+      this.boardsSubject.next(boards);
+      if (!this.boardAtualSubject.value && boards.length > 0) {
+        this.selecionar(boards[0]);
+      }
+    });
+  }
+
+  selecionar(board: Board) {
+    this.boardAtualSubject.next(board);
+  }
+
+  criar(nome: string) {
+    this.api.criar(nome).subscribe(novo => {
+      this.boardsSubject.next([...this.boardsSubject.value, novo]);
+      this.selecionar(novo);
+    });
+  }
+
+  renomear(id: string, novoNome: string) {
+    this.api.renomear(id, novoNome).subscribe(() => {
+      const atualizados = this.boardsSubject.value.map(b => (b.id === id ? { ...b, nome: novoNome } : b));
+      this.boardsSubject.next(atualizados);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next({ ...atual, nome: novoNome });
+      }
+    });
+  }
+
+  excluir(id: string) {
+    this.api.excluir(id).subscribe(() => {
+      const restantes = this.boardsSubject.value.filter(b => b.id !== id);
+      this.boardsSubject.next(restantes);
+
+      const atual = this.boardAtualSubject.value;
+      if (atual?.id === id) {
+        this.boardAtualSubject.next(restantes.length > 0 ? restantes[0] : null);
+      }
+    });
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.ts`:
+
+```typescript
+import { Component, ElementRef, EventEmitter, HostListener, OnInit, Output, ViewChild, inject } from '@angular/core';
+import { BoardStateService } from '../board-state.service';
+import { Board } from '../models/board';
+
+@Component({
+  imports: [],
+  selector: 'app-board-selector-modal',
+  styleUrl: './board-selector-modal.scss',
+  templateUrl: './board-selector-modal.html',
+})
+export class BoardSelectorModalComponent implements OnInit {
+  private boards = inject(BoardStateService);
+  @Output() fechar = new EventEmitter<void>();
+
+  @ViewChild('modalRef') modalRef!: ElementRef<HTMLDivElement>;
+
+  todosBoards: Board[] = [];
+  boardSelecionadoId = '';
+  renomeando = false;
+  confirmandoExclusao = false;
+
+  private arrastando = false;
+  private offsetX = 0;
+  private offsetY = 0;
+
+  ngOnInit() {
+    this.boards.boards$.subscribe(boards => {
+      this.todosBoards = boards;
+      const aindaExiste = boards.some(b => b.id === this.boardSelecionadoId);
+      if (!aindaExiste) {
+        this.boardSelecionadoId = boards.length > 0 ? boards[0].id : '';
+      }
+    });
+    this.boards.boardAtual$.subscribe(atual => {
+      if (atual) {
+        this.boardSelecionadoId = atual.id;
+      }
+    });
+  }
+
+  get boardSelecionado(): Board | undefined {
+    return this.todosBoards.find(b => b.id === this.boardSelecionadoId);
+  }
+
+  selecionarNaLista(id: string) {
+    this.boardSelecionadoId = id;
+    this.renomeando = false;
+    this.confirmandoExclusao = false;
+  }
+
+  iniciarRenomeio() {
+    if (this.boardSelecionado) {
+      this.renomeando = true;
+      this.confirmandoExclusao = false;
+    }
+  }
+
+  confirmarRenomeio(novoNome: string) {
+    const limpo = novoNome.trim();
+    if (!limpo || !this.boardSelecionado) return;
+    this.boards.renomear(this.boardSelecionado.id, limpo);
+    this.renomeando = false;
+  }
+
+  iniciarExclusao() {
+    if (this.boardSelecionado) {
+      this.confirmandoExclusao = true;
+      this.renomeando = false;
+    }
+  }
+
+  confirmarExclusao() {
+    if (!this.boardSelecionado) return;
+    this.boards.excluir(this.boardSelecionado.id);
+    this.confirmandoExclusao = false;
+  }
+
+  abrir() {
+    if (!this.boardSelecionado) return;
+    this.boards.selecionar(this.boardSelecionado);
+    this.fechar.emit();
+  }
+
+  criar(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo) return;
+    this.boards.criar(limpo);
+    this.fechar.emit();
+  }
+
+  iniciarArraste(evento: MouseEvent) {
+    const modal = this.modalRef.nativeElement;
+    const retangulo = modal.getBoundingClientRect();
+
+    modal.style.position = 'fixed';
+    modal.style.margin = '0';
+    modal.style.top = `${retangulo.top}px`;
+    modal.style.left = `${retangulo.left}px`;
+
+    this.arrastando = true;
+    this.offsetX = evento.clientX - retangulo.left;
+    this.offsetY = evento.clientY - retangulo.top;
+    evento.preventDefault();
+    evento.stopPropagation();
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  mover(evento: MouseEvent) {
+    if (!this.arrastando) return;
+    const modal = this.modalRef.nativeElement;
+    modal.style.left = `${evento.clientX - this.offsetX}px`;
+    modal.style.top = `${evento.clientY - this.offsetY}px`;
+  }
+
+  @HostListener('document:mouseup')
+  pararArraste() {
+    this.arrastando = false;
+  }
+}
+```
+
+`src/app/board-selector-modal/board-selector-modal.html`:
+
+```html
+<div class="backdrop">
+  <div class="modal" #modalRef>
+    <div class="cabecalho-modal" (mousedown)="iniciarArraste($event)">Painéis</div>
+
+    <label>Painel</label>
+    <select #selectBoard (change)="selecionarNaLista(selectBoard.value)">
+      @for (b of todosBoards; track b.id) {
+        <option [value]="b.id" [selected]="b.id === boardSelecionadoId">{{ b.nome }}</option>
+      }
+    </select>
+
+    @if (renomeando) {
+      <div class="renomear">
+        <input #novoNome [value]="boardSelecionado?.nome" (keydown.enter)="confirmarRenomeio(novoNome.value)" />
+        <div class="acoes-renomear">
+          <button (click)="confirmarRenomeio(novoNome.value)">Salvar</button>
+          <button (click)="renomeando = false">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    @if (confirmandoExclusao) {
+      <div class="confirmar-exclusao">
+        <p>Excluir "{{ boardSelecionado?.nome }}"? Os cards deste painel também serão apagados.</p>
+        <div class="acoes-confirmar">
+          <button class="perigo" (click)="confirmarExclusao()">Excluir</button>
+          <button (click)="confirmandoExclusao = false">Cancelar</button>
+        </div>
+      </div>
+    }
+
+    <div class="acoes-board">
+      <button (click)="iniciarRenomeio()">Renomear</button>
+      <button (click)="abrir()">Abrir</button>
+    </div>
+
+    <button class="excluir-board" (click)="iniciarExclusao()">Excluir Painel</button>
+
+    <div class="novo-board">
+      <input #nomeNovoBoard placeholder="Nome do novo painel" />
+      <button (click)="criar(nomeNovoBoard.value); nomeNovoBoard.value = ''">Criar Painel</button>
+    </div>
+
+    <div class="acoes">
+      <button (click)="fechar.emit()">Fechar</button>
+    </div>
+  </div>
+</div>
+```
+
+`src/app/board-selector-modal/board-selector-modal.scss`:
+
+```scss
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: white; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.3); padding: 1rem; width: 320px; display: flex; flex-direction: column; gap: 0.75rem; }
+.cabecalho-modal { font-weight: bold; cursor: move; padding-bottom: 0.5rem; border-bottom: 1px solid #eee; }
+.modal label { font-size: 0.8rem; color: #555; }
+.modal select { font: inherit; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-board { display: flex; gap: 0.5rem; }
+.acoes-board button { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.renomear { display: flex; flex-direction: column; gap: 0.5rem; }
+.renomear input { padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+.acoes-renomear { display: flex; gap: 0.5rem; }
+.acoes-renomear button { flex: 1; padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.excluir-board { padding: 6px 8px; border-radius: 4px; border: 1px solid #e53935; color: #e53935; background: white; cursor: pointer; }
+.excluir-board:hover { background: #fdecea; }
+.confirmar-exclusao { display: flex; flex-direction: column; gap: 0.5rem; background: #fff4f4; border: 1px solid #f3c2c2; border-radius: 4px; padding: 0.5rem; }
+.confirmar-exclusao p { margin: 0; font-size: 0.85rem; color: #7a1f1f; }
+.acoes-confirmar { display: flex; gap: 0.5rem; }
+.acoes-confirmar button { flex: 1; padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes-confirmar button.perigo { background: #e53935; color: white; border-color: #e53935; }
+.novo-board { display: flex; gap: 0.5rem; }
+.novo-board input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; }
+.novo-board button, .acoes button { padding: 4px 12px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer; background: #f5f5f5; }
+.acoes { display: flex; justify-content: flex-end; }
+```
+
+### Descrição Técnica
+
+- `deleteBy...` é o prefixo de consulta derivada do Spring Data JPA para exclusão, análogo a `findBy...`, sem exigir `@Query` nem SQL manual.
+- Uma limitação consciente foi documentada: nada nesta parte impede excluir o último painel restante. Se isso acontecer, o quadro por trás do modal simplesmente para de atualizar, mas o próprio modal continua funcional para criar um painel novo ali mesmo — a recuperação é imediata.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`deleteBy...`** (Spring Data) | Prefixo de consulta derivada que localiza e remove as entidades correspondentes ao critério do nome do método. |
+| **Confirmação inline** | Padrão de interface em que uma ação destrutiva revela uma segunda etapa de confirmação no mesmo espaço da tela, em vez de um modal separado. |
+
+### Resultado
+
+A implementação foi testada e revelou uma falha ao excluir um painel que já continha cards (detalhada e corrigida na Parte 24, a seguir); excluir um painel vazio funcionou normalmente já nesta etapa, assim como a interface de confirmação (abrir, cancelar, confirmar) e a atualização da caixa de seleção.
+
+<!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
+<p align="center">
+  <img src="000-Midia_e_Anexos/AAAA-MM-DD-HH-MM-SS.png" alt="" width="1024">
+</p>
+-->
+
+---
+
+## Parte 24: Corrigindo a Exclusão de Painéis com Cards
+
+### Objetivo
+
+Corrigir o `500 Internal Server Error` observado, na Parte 23, ao excluir um painel que continha cards — um painel vazio excluía normalmente, o que apontava diretamente para a linha de exclusão em cascata dos cards.
+
+### Limitação Identificada
+
+O log do backend confirmou a causa exata:
+
+```
+jakarta.persistence.TransactionRequiredException: No EntityManager with actual
+transaction available for current thread - cannot reliably process 'remove' call
+	...
+	at jdk.proxy2/jdk.proxy2.$Proxy125.deleteByBoardId(Unknown Source)
+	at com.github.ahaerdy.backend.service.BoardService.excluir(BoardService.java:56)
+```
+
+Métodos herdados de `JpaRepository` (`save`, `deleteById`, etc.) já vêm com transação própria, gerenciada automaticamente pelo Spring Data. `deleteByBoardId`, porém, é uma consulta derivada personalizada (Parte 23), e uma consulta derivada de exclusão que remove mais de uma entidade não recebe transação automaticamente — quem chama o método precisa estar dentro de um contexto transacional, e `BoardService.excluir` não estava. Um painel sem cards nunca chegava a executar nenhum `remove()` de verdade (nada dava errado, porque nada foi tentado); um painel com cards expunha a ausência de transação na primeira remoção real.
+
+### Implementação Realizada
+
+- Anotação `@Transactional` (de `org.springframework.transaction.annotation`) adicionada ao método `BoardService.excluir`, cobrindo as duas escritas (`deleteByBoardId` e `deleteById`) na mesma transação.
+
+### Código
+
+`src/main/java/com/github/ahaerdy/backend/service/BoardService.java`:
+
+```java
+package com.github.ahaerdy.backend.service;
+
+import com.github.ahaerdy.backend.model.Board;
+import com.github.ahaerdy.backend.repository.BoardRepository;
+import com.github.ahaerdy.backend.repository.CardRepository;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Service
+public class BoardService {
+
+    private final BoardRepository boardRepository;
+    private final CardRepository cardRepository;
+
+    public BoardService(BoardRepository boardRepository, CardRepository cardRepository) {
+        this.boardRepository = boardRepository;
+        this.cardRepository = cardRepository;
+    }
+
+    @PostConstruct
+    public void garantirBoardPadrao() {
+        if (boardRepository.count() > 0) {
+            return;
+        }
+
+        var padrao = new Board(UUID.randomUUID().toString(), "Meu Quadro");
+        boardRepository.save(padrao);
+
+        var orfaos = cardRepository.findByBoardIdIsNull();
+        for (var card : orfaos) {
+            card.setBoardId(padrao.getId());
+            cardRepository.save(card);
+        }
+    }
+
+    public List<Board> listarTodos() {
+        return boardRepository.findAll();
+    }
+
+    public Board criar(String nome) {
+        var novo = new Board(UUID.randomUUID().toString(), nome);
+        return boardRepository.save(novo);
+    }
+
+    public void renomear(String id, String novoNome) {
+        boardRepository.findById(id).ifPresent(b -> {
+            b.setNome(novoNome);
+            boardRepository.save(b);
+        });
+    }
+
+    @Transactional
+    public void excluir(String id) {
+        cardRepository.deleteByBoardId(id);
+        boardRepository.deleteById(id);
+    }
+}
+```
+
+### Descrição Técnica
+
+- `@Transactional` abre uma transação antes do método executar e a confirma ao final, ou desfaz tudo se qualquer exceção interromper a execução no meio do caminho.
+- Um efeito colateral bem-vindo: a exclusão do painel e a exclusão em cascata dos seus cards passaram a ser uma operação atômica — ou as duas acontecem juntas, ou nenhuma é persistida.
+- Os demais métodos de `BoardService` nunca precisaram dessa anotação porque cada um faz só uma escrita, e `save`/`deleteById`, sendo métodos padrão de `JpaRepository`, já são transacionais por conta própria. `excluir` foi o primeiro método deste serviço a combinar duas escritas em sequência.
+
+### Glossário
+
+| Termo | Significado |
+|---|---|
+| **`@Transactional`** | Anotação do Spring que agrupa as operações de um método em uma única transação: todas persistidas juntas, ou nenhuma, se uma exceção interromper o método. |
+| **`EntityManager`** | Objeto do JPA que gerencia o ciclo de vida das entidades dentro de uma transação; a exceção desta parte ocorreu por não haver um `EntityManager` transacional disponível. |
+
+### Resultado
+
+Confirmado: excluir um painel com cards passou a funcionar sem erro, com os cards do painel removidos corretamente junto com ele. O projeto foi encerrado nesta parte, para fins de apresentação do conceito de um quadro Kanban com múltiplos painéis.
 
 <!-- Inserir aqui as capturas de tela desta etapa, no mesmo formato das entradas anteriores:
 <p align="center">
