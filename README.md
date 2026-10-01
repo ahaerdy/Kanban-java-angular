@@ -2,20 +2,20 @@
 
 Um quadro Kanban simples, com múltiplos painéis, construído com **Angular** no frontend e **Spring Boot** no backend, persistindo em **MySQL** via Docker.
 
-![KBoard — painel principal](docs/images/board-principal.png)
+![KBoard, painel principal](docs/images/board-principal.png)
 
 ## Sobre o projeto
 
-KBoard nasceu como um projeto de estudo — um Kanban minimalista, de coluna fixa (`A Fazer` / `Em Andamento` / `Concluído`) — e evoluiu, passo a passo, até suportar múltiplos painéis nomeados, cards com etiqueta e cor livres, arrastar-e-soltar com ordem persistida, e um pequeno conjunto de modais para gerenciar tudo isso.
+KBoard nasceu como um projeto de estudo, um Kanban minimalista de coluna fixa (`A Fazer` / `Em Andamento` / `Concluído`), e evoluiu, passo a passo, até suportar múltiplos painéis nomeados, cards com etiqueta e cor livres, arrastar-e-soltar com ordem persistida, e um pequeno conjunto de modais para gerenciar tudo isso.
 
-O projeto foi construído de forma incremental e documentada: cada funcionalidade, correção e decisão de arquitetura está registrada, em ordem cronológica, no [log de desenvolvimento](docs/log-desenvolvimento-kanban.md). Vale a leitura para quem quiser entender não só *o que* foi construído, mas *por quê* — inclusive os erros encontrados e corrigidos no caminho.
+O projeto foi construído de forma incremental e documentada: cada funcionalidade, correção e decisão de arquitetura está registrada, em ordem cronológica, no [log de desenvolvimento](docs/log-desenvolvimento-kanban.md). Vale a leitura para quem quiser entender não só *o que* foi construído, mas *por quê*, inclusive os erros encontrados e corrigidos no caminho.
 
 ## Funcionalidades
 
 - **Múltiplos painéis (boards)**: crie, renomeie e exclua painéis nomeados, cada um com seu próprio conjunto de cards.
 - **Três colunas fixas** por painel: `A Fazer`, `Em Andamento`, `Concluído`.
 - **Cards completos**: título, descrição livre e uma etiqueta com nome e cor (código hexadecimal) definidos livremente pelo usuário.
-- **Arrastar-e-soltar**: mova cards entre colunas ou reordene dentro da mesma coluna — a posição é persistida e sobrevive a um recarregamento da página.
+- **Arrastar-e-soltar**: mova cards entre colunas ou reordene dentro da mesma coluna. A posição é persistida e sobrevive a um recarregamento da página.
 - **Edição em modal**: um modal arrastável e redimensionável permite editar todos os dados de um card sem excluí-lo e recriá-lo.
 - **Gerenciamento de painéis em modal**: uma caixa de seleção lista todos os painéis existentes, com ações para renomear, abrir ou excluir (com confirmação) o painel escolhido, e um campo para criar um novo painel.
 
@@ -60,10 +60,12 @@ projeto/
 │       └── board-api.service.ts / board-state.service.ts
 └── docs/
     ├── log-desenvolvimento-kanban.md
-    └── images/
+    ├── images/
+    └── database/
+        └── backup_kanban.sql
 ```
 
-O frontend segue uma arquitetura de estado simples: um serviço `*StateService` por domínio (`KanbanStateService` para cards, `BoardStateService` para painéis), cada um expondo um `Observable` que os componentes consomem — sem gerenciador de estado externo.
+O frontend segue uma arquitetura de estado simples: um serviço `*StateService` por domínio (`KanbanStateService` para cards, `BoardStateService` para painéis), cada um expondo um `Observable` que os componentes consomem, sem gerenciador de estado externo.
 
 ## API
 
@@ -100,7 +102,7 @@ docker compose up -d
 
 Isso sobe um container MySQL com o banco `kanban`, na porta `3306`.
 
-> Na primeira inicialização do backend, um painel padrão ("Meu Quadro") é criado automaticamente, e qualquer card pré-existente sem painel é migrado para ele — não é necessário nenhum passo manual.
+> Na primeira inicialização do backend, um painel padrão ("Meu Quadro") é criado automaticamente, e qualquer card pré-existente sem painel é migrado para ele. Nenhum passo manual é necessário.
 
 ### 2. Backend
 
@@ -123,22 +125,22 @@ A aplicação fica disponível em `http://localhost:4200`.
 
 ## Dados de exemplo
 
-Um dump do banco de dados, com um painel de exemplo já populado, está disponível em [`docs/backup_kanban.sql`](docs/backup_kanban.sql). Para restaurá-lo:
+Um dump do banco de dados, com um painel de exemplo já populado, está disponível em [`docs/database/backup_kanban.sql`](docs/database/backup_kanban.sql). Para restaurá-lo:
 
 ```bash
-mysql -h 127.0.0.1 -P 3306 -u SEU_USUARIO -p kanban < docs/backup_kanban.sql
+mysql -h 127.0.0.1 -P 3306 -u SEU_USUARIO -p kanban < docs/database/backup_kanban.sql
 ```
 
 ## Documentação de desenvolvimento
 
-Este projeto foi construído de forma incremental, com cada etapa documentada em detalhe — objetivo, implementação, decisões de arquitetura e, quando aplicável, o processo de diagnóstico de bugs encontrados ao longo do caminho. O registro completo está em [`docs/log-desenvolvimento-kanban.md`](docs/log-desenvolvimento-kanban.md).
+Este projeto foi construído de forma incremental, com cada etapa documentada em detalhe: objetivo, implementação, decisões de arquitetura e, quando aplicável, o processo de diagnóstico de bugs encontrados ao longo do caminho. O registro completo está em [`docs/log-desenvolvimento-kanban.md`](docs/log-desenvolvimento-kanban.md).
 
 ## Melhorias futuras
 
-O projeto foi encerrado, por decisão consciente, com o escopo descrito acima — suficiente para demonstrar o conceito de um quadro Kanban funcional com múltiplos painéis. Ficaram deliberadamente de fora, e são candidatos naturais para uma próxima etapa:
+O projeto foi encerrado, por decisão consciente, com o escopo descrito acima, suficiente para demonstrar o conceito de um quadro Kanban funcional com múltiplos painéis. Ficaram deliberadamente de fora, e são candidatos naturais para uma próxima etapa:
 
 - **Autenticação e autorização.** Hoje qualquer pessoa com acesso à aplicação vê e edita todos os painéis; não há usuários, login nem permissões.
-- **Itens da barra lateral sem funcionalidade.** "Etiquetas", "Config." e "Ajuda" existem visualmente, mas não fazem nada — apenas "Painéis" é funcional.
+- **Itens da barra lateral sem funcionalidade.** "Etiquetas", "Config." e "Ajuda" existem visualmente, mas não fazem nada. Apenas "Painéis" é funcional.
 - **Contador de cards desativado.** O componente `CardCountComponent` existe e funciona, mas está comentado no template (`app.html`); reativá-lo é trivial.
 - **Posição exata ao mover entre colunas.** Um card movido para outra coluna sempre vai para o fim dela; a posição exata onde foi solto não é preservada (diferente da reordenação dentro da mesma coluna, essa sim precisa).
 - **Exclusão do último painel restante.** Nada impede excluir todos os painéis; a aplicação fica funcional, mas sem nenhum painel para exibir, até que um novo seja criado.
@@ -150,7 +152,7 @@ O projeto foi encerrado, por decisão consciente, com o escopo descrito acima �
 
 ## Licença
 
-Este projeto está licenciado sob a licença MIT — veja o arquivo [`LICENSE`](LICENSE) para o texto completo.
+Este projeto está licenciado sob a licença MIT. Veja o arquivo [`LICENSE`](LICENSE) para o texto completo.
 
 ## Autor
 
