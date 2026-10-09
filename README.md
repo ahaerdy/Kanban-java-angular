@@ -69,7 +69,7 @@ O frontend segue uma arquitetura de estado simples: um serviço `*StateService` 
 
 ## API
 
-A API expõe dois recursos principais:
+Recursos principais:
 
 | Método | Rota | Descrição |
 |---|---|---|
